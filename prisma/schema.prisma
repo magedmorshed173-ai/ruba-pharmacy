@@ -61,6 +61,7 @@ model Medicine {
   saleItems SaleItem[]
   movements StockMovement[]
   batches   Batch[]
+  poItems   PurchaseOrderItem[]
 
   @@index([genericName, dosage])
   @@index([expiryDate])
@@ -115,6 +116,59 @@ model StockMovement {
 
   @@index([medicineId])
   @@index([createdAt])
+}
+
+// ───────────────────────── الموردون والمشتريات ─────────────────────────
+// المعيار العالمي (Odoo/ERPNext): أمر شراء بحالة، واستلام ذري يولّد دفعات LOT
+// بالتكلفة الفعلية — أساس تقارير الأرباح الدقيقة.
+
+model Supplier {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  phone     String?
+  email     String?
+  address   String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+
+  @@index([name])
+}
+
+model PurchaseOrder {
+  id           String    @id @default(cuid())
+  number       Int       @unique // يُولَّد خادمياً (max+1 داخل معاملة) — SQLite لا يدعم autoincrement خارج المفتاح
+  supplierId   String
+  supplier     Supplier  @relation(fields: [supplierId], references: [id])
+  status       String    @default("draft") // draft | received | cancelled
+  totalHalalas Int       @default(0) // مجموع البنود بالهللات — يُحسب خادمياً
+  notes        String?
+  createdBy    String?
+  createdAt    DateTime  @default(now())
+  receivedAt   DateTime?
+
+  items PurchaseOrderItem[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model PurchaseOrderItem {
+  id         String        @id @default(cuid())
+  poId       String
+  po         PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  medicineId String
+  medicine   Medicine      @relation(fields: [medicineId], references: [id])
+  quantity   Int
+  unitCost   Int           // هللات
+  lotNumber  String?
+  expiryDate DateTime?
+  receivedQty Int          @default(0)
+
+  @@index([poId])
 }
 
 // ───────────────────────────── المبيعات ─────────────────────────────

@@ -7,6 +7,7 @@ import { LoginView } from "./login-view";
 import { DashboardView } from "./dashboard-view";
 import { PosView } from "./pos-view";
 import { InventoryView } from "./inventory-view";
+import { SuppliersView } from "./suppliers-view";
 import { PatientsView } from "./patients-view";
 import { ReportsView } from "./reports-view";
 import { NotificationsView } from "./notifications-view";
@@ -27,6 +28,7 @@ import {
   LayoutDashboard,
   ShoppingCart,
   Package,
+  Truck,
   UsersRound,
   BarChart3,
   Bell,
@@ -46,6 +48,7 @@ type ViewKey =
   | "dashboard"
   | "pos"
   | "inventory"
+  | "suppliers"
   | "patients"
   | "reports"
   | "notifications"
@@ -56,6 +59,7 @@ const NAV: { key: ViewKey; label: string; icon: typeof LayoutDashboard; minRole?
   { key: "dashboard", label: "الرئيسية", icon: LayoutDashboard },
   { key: "pos", label: "نقطة البيع", icon: ShoppingCart },
   { key: "inventory", label: "المخزون", icon: Package },
+  { key: "suppliers", label: "المشتريات", icon: Truck, minRole: "pharmacist" },
   { key: "patients", label: "المرضى", icon: UsersRound },
   { key: "reports", label: "التقارير", icon: BarChart3 },
   { key: "notifications", label: "الإشعارات", icon: Bell },
@@ -287,6 +291,7 @@ export function AppShell() {
           {view === "dashboard" && <DashboardView user={user} onNavigate={setView} />}
           {view === "pos" && <PosView user={user} onDone={refreshUnread} />}
           {view === "inventory" && <InventoryView user={user} />}
+          {view === "suppliers" && user.role !== "technician" && <SuppliersView user={user} />}
           {view === "patients" && <PatientsView user={user} />}
           {view === "reports" && <ReportsView />}
           {view === "notifications" && <NotificationsView onRead={refreshUnread} />}
@@ -295,7 +300,7 @@ export function AppShell() {
         </main>
 
         <footer className="mt-auto border-t bg-card/60 py-3 text-center text-xs text-muted-foreground">
-          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 3.0
+          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 3.2
         </footer>
       </div>
     </div>
