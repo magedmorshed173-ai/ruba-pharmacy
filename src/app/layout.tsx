@@ -16,7 +16,10 @@ export const metadata: Metadata = {
     "نظام إدارة صيدليات عربي متكامل — نقطة بيع، مخزون، مرضى، تقارير ذكية، وإشعارات استباقية. واجهة ويب احترافية عربية بالكامل.",
   keywords: ["صيدلية", "صيدليات", "نظام صيدليات", "نقطة بيع", "مخزون أدوية", "Ruba Pharmacy"],
   authors: [{ name: "فريق ربي فارمسي" }],
-  icons: { icon: "/icon.svg" },
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
+  },
 };
 
 export const viewport: Viewport = {

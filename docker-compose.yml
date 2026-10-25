@@ -1,0 +1,18 @@
+services:
+  ruba-pharmacy:
+    build: .
+    image: ruba-pharmacy:3.0.0
+    container_name: ruba-pharmacy
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      # قاعدة SQLite داخل وحدة تخزين دائمة — استبدلها بـ PostgreSQL في النشر الواسع
+      DATABASE_URL: file:/app/db/custom.db
+    volumes:
+      - ruba-db:/app/db
+    restart: unless-stopped
+    # لإضافة TLS خلف وكيل عكسي (Caddy/Traefik/Nginx) راجع docs/DEPLOYMENT.md
+
+volumes:
+  ruba-db:
