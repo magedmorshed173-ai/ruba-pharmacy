@@ -4,6 +4,8 @@
 
 **منصة ويب حديثة «بمستوى الكبار» لإدارة الصيدلية بالكامل: نقطة بيع ذكية، مخزون، مرضى، تداخلات دوائية، تقارير — بواجهة عربية RTL أنيقة.**
 
+🌐 **صفحة المشروع الحية:** <https://magedmorshed173-ai.github.io/ruba-pharmacy/>
+
 ![CI](https://github.com/magedmorshed173-ai/ruba-pharmacy/actions/workflows/ci.yml/badge.svg)
 ![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
