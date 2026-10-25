@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: أسئلة الاستخدام والدعم
+    url: https://github.com/magedmorshed173-ai/ruba-pharmacy/discussions
+    about: للاستفسارات العامة عن التشغيل والنشر — افتح مناقشة بدلاً من تقرير خطأ.
+  - name: الإبلاغ عن ثغرة أمنية
+    url: https://github.com/magedmorshed173-ai/ruba-pharmacy/security/advisories/new
+    about: ⚠️ لا تنشر الثغرات علناً — استخدم الإفصاح الأمني الخاص (راجع SECURITY.md).

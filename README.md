@@ -4,10 +4,13 @@
 
 **منصة ويب حديثة «بمستوى الكبار» لإدارة الصيدلية بالكامل: نقطة بيع ذكية، مخزون، مرضى، تداخلات دوائية، تقارير — بواجهة عربية RTL أنيقة.**
 
+![CI](https://github.com/magedmorshed173-ai/ruba-pharmacy/actions/workflows/ci.yml/badge.svg)
 ![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![Prisma](https://img.shields.io/badge/Prisma-6-2D3748?logo=prisma&logoColor=white)
 ![Tailwind CSS 4](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?logo=tailwindcss&logoColor=white)
+![PWA](https://img.shields.io/badge/PWA-Ready-5A0FC8?logo=pwa&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)
 ![shadcn/ui](https://img.shields.io/badge/shadcn%2Fui-Latest-000000?logo=shadcnui&logoColor=white)
 ![License MIT](https://img.shields.io/badge/License-MIT-green)
 
@@ -68,7 +71,27 @@
 - **Prisma 6** + SQLite (جاهز للترقية إلى PostgreSQL بتغيير واحد)
 - **Tailwind CSS 4** + **shadcn/ui** + **Recharts**
 - خط **Tajawal** العربي، ثيم طبي Teal، دعم RTL كامل
+- **PWA جاهز للتثبيت والنشر على Google Play** (TWA) — راجع [docs/ANDROID.md](docs/ANDROID.md)
+- **Docker** متعدد المراحل + `docker-compose` للتشغيل الفوري داخل الصيدلية
+- **CI/CD**: فحص lint + بناء إنتاج في كل دفعة، وDependabot أسبوعي للتبعيات
 - اختبار تحقّق كامل عبر متصفح آلي (دخول ← بيع ← تداخل دوائي ← تقارير ← جوال 390px)
+
+## 🏢 حوكمة بمعايير الشركات
+
+| الوثيقة | الغرض |
+|---|---|
+| [SECURITY.md](SECURITY.md) | سياسة الإبلاغ عن الثغرات + ملخص التعزيز الأمني |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | دليل المساهمة ومعايير الكود |
+| [CHANGELOG.md](CHANGELOG.md) | سجل الإصدارات منذ 1.0 |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | نشر Vercel / Docker / PostgreSQL |
+| [docs/ANDROID.md](docs/ANDROID.md) | خطوات النشر على Google Play خطوة بخطوة |
+| [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md) | سياسة خصوصية جاهزة متوافقة مع متطلبات Play |
+
+## 🐳 تشغيل بأمر واحد
+
+```bash
+docker compose up -d --build   # المنصة على http://localhost:3000
+```
 
 ## 🚀 التشغيل السريع
 
@@ -105,22 +128,32 @@ bun run dev        # ← http://localhost:3000
 
 ```
 ruba-pharmacy/
+├── .github/                    # CI، قوالب Issues/PR، Dependabot
 ├── prisma/schema.prisma        # 9 نماذج: User, Medicine, Sale, Patient, ...
 ├── scripts/seed.ts             # بيانات تجريبية عربية واقعية
+├── docs/                       # ANDROID، DEPLOYMENT، PRIVACY_POLICY + لقطات
 ├── src/
 │   ├── app/api/                # 11 مسار API: auth, sales, medicines, ...
-│   ├── app/(dashboard)/        # الصفحات: POS, مخزون, مرضى, تقارير...
+│   ├── app/manifest.ts         # بيان PWA (تثبيت + Google Play)
+│   ├── app/(dashboard)/        # الصفحات: POS، مخزون، مرضى، تقارير...
 │   └── components/ruba/        # مكونات المنصة المخصصة
-└── docs/screenshots/           # لقطات الواجهة
+├── Dockerfile                  # صورة إنتاج متعددة المراحل (مستخدم غير جذر + healthcheck)
+└── docker-compose.yml          # تشغيل فوري بوحدة بيانات دائمة
 ```
 
 ## 🗺️ خارطة الطريق
 
-- [ ] PostgreSQL + Docker Compose
+- [x] ✅ Docker + CI/CD + PWA + وثائق Google Play
 - [ ] إشعارات WhatsApp/SMS للطلبات الجاهزة
 - [ ] باركود QR للفواتير (ZATCA)
-- [ ] تطبيق جوال (React Native يشارك نفس الـ API)
+- [ ] حزمة Capacitor بأصول أصلية (مسح باركود + طباعة حرارية)
 - [ ] تعدد الفروع ومزامنة المخزون
+
+<div align="center">
+
+**ربي فارمسي** — منتج تطويره فريق **Ruba Pharmacy Team** 🇸🇦
+
+</div>
 
 ## 📄 الرخصة
 

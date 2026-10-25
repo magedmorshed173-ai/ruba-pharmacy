@@ -1,0 +1,51 @@
+name: 🐞 تقرير خطأ (Bug Report)
+description: أبلغ عن مشكلة لمساعدةنا على تحسين ربي فارمسي
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: شكراً لإبلاغك! أكمل التفاصيل التالية ليتمكن الفريق من إعادة إنتاج المشكلة بسرعة.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: ماذا حدث؟
+      description: صف المشكلة بوضوح، وما كان متوقعاً أن يحدث.
+      placeholder: عند إتمام البيع تظهر رسالة خطأ…
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: خطوات إعادة الإنتاج
+      placeholder: |
+        1. ادخل بحساب فني
+        2. افتح نقطة البيع
+        3. أضف دواء…
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: المجال المتأثر
+      options:
+        - نقطة البيع
+        - المخزون
+        - المرضى
+        - التقارير
+        - الإشعارات
+        - المستخدمون والصلاحيات
+        - النسخ الاحتياطي
+        - أخرى
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: الإصدار / بيئة النشر
+      placeholder: v3.0.0 — Docker / Vercel / تطوير محلي
+  - type: textarea
+    id: logs
+    attributes:
+      label: سجلات أو لقطات شاشة
+      description: الصق أي سجلات (logs) أو صور توضح المشكلة.

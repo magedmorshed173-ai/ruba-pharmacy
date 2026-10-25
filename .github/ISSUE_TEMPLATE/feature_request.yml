@@ -1,0 +1,40 @@
+name: 💡 اقتراح ميزة (Feature Request)
+description: شاركنا فكرة لتطوير المنصة
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: ما المشكلة التي تحلها الفكرة؟
+      placeholder: حالياً لا يمكن… وهو أمر مهم للصيدليات لأن…
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: الحل المقترح
+      description: ماذا تريد أن يحدث بالتحديد؟
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: المجال
+      options:
+        - نقطة البيع
+        - المخزون
+        - المرضى
+        - التقارير
+        - الإشعارات
+        - المستخدمون والصلاحيات
+        - تطبيق الجوال / PWA
+        - أخرى
+    validations:
+      required: true
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: المساهمة
+      options:
+        - label: أرغب بالمساهمة في تنفيذ هذه الميزة بنفسي
