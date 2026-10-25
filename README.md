@@ -41,6 +41,7 @@
 
 ### 📦 المخزون والتنبؤ
 - إدارة كاملة للأدوية (28 دواء عربي مُحمَّل جاهزاً) مع التصنيفات
+- **دفعات التشغيلة (LOT)** بصلاحية مستقلة + **صرف FEFO** آلي: الأقرب انتهاءً يُصرف أولاً، والمنتهي محجوب حتى لو ظهر الرصيد متاحاً
 - سجل تدقيق **StockMovement** لكل حركة إدخال/إخراج — لا رقم يختفي
 - **تنبؤ إعادة الطلب** الذكي بناءً على معدل الاستهلاك اليومي ومهلة التوريد
 - تنبيهات انخفاض المخزون ونفاد الأصناف عبر مركز إشعارات بمفتاح `dedupeKey` فريد
@@ -69,8 +70,9 @@
 
 - **Next.js 16** (App Router) + **TypeScript 5**
 - **Prisma 6** + SQLite (جاهز للترقية إلى PostgreSQL بتغيير واحد)
-- **Tailwind CSS 4** + **shadcn/ui** + **Recharts**
+- **Tailwind CSS 4** + **shadcn/ui** + **Recharts** + وضع ليلي
 - خط **Tajawal** العربي، ثيم طبي Teal، دعم RTL كامل
+- **اختبارات وحدوية** (Vitest — `bun run test`) تغطي المال وFEFO والأدوار
 - **PWA جاهز للتثبيت والنشر على Google Play** (TWA) — راجع [docs/ANDROID.md](docs/ANDROID.md)
 - **Docker** متعدد المراحل + `docker-compose` للتشغيل الفوري داخل الصيدلية
 - **CI/CD**: فحص lint + بناء إنتاج في كل دفعة، وDependabot أسبوعي للتبعيات
@@ -83,6 +85,7 @@
 | [SECURITY.md](SECURITY.md) | سياسة الإبلاغ عن الثغرات + ملخص التعزيز الأمني |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | دليل المساهمة ومعايير الكود |
 | [CHANGELOG.md](CHANGELOG.md) | سجل الإصدارات منذ 1.0 |
+| [docs/EVALUATION.md](docs/EVALUATION.md) | **التقييم المقارن** مع Odoo/ERPNext/GNU Health وخارطة المعالجة |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | نشر Vercel / Docker / PostgreSQL |
 | [docs/ANDROID.md](docs/ANDROID.md) | خطوات النشر على Google Play خطوة بخطوة |
 | [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md) | سياسة خصوصية جاهزة متوافقة مع متطلبات Play |
@@ -144,10 +147,10 @@ ruba-pharmacy/
 ## 🗺️ خارطة الطريق
 
 - [x] ✅ Docker + CI/CD + PWA + وثائق Google Play
-- [ ] إشعارات WhatsApp/SMS للطلبات الجاهزة
+- [x] ✅ دفعات LOT + صرف FEFO + إشعارات دفعات + اختبارات + وضع ليلي (v3.1)
+- [ ] موردون وأوامر شراء (Purchase Orders)
+- [ ] ماسح باركود بالكاميرا + عمل دون اتصال (Offline PWA)
 - [ ] باركود QR للفواتير (ZATCA)
-- [ ] حزمة Capacitor بأصول أصلية (مسح باركود + طباعة حرارية)
-- [ ] تعدد الفروع ومزامنة المخزون
 
 <div align="center">
 
