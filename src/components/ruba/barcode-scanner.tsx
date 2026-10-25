@@ -20,6 +20,14 @@ type BarcodeDetectorCtor = new (opts?: { formats?: string[] }) => BarcodeDetecto
 
 const FORMATS = ["ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e", "qr_code"];
 
+/** فحص دعم المسح — مشتق وقت العرض (بدون حالة) */
+function scannerSupported(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof (window as unknown as { BarcodeDetector?: unknown }).BarcodeDetector === "function"
+  );
+}
+
 /** ماسح باركود بالكاميرا (v3.4) — BarcodeDetector API مع معالجة صلاحيات لطيفة */
 export function BarcodeScanner({
   onScan,
@@ -29,7 +37,7 @@ export function BarcodeScanner({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [state, setState] = useState<"init" | "scanning" | "unsupported" | "denied" | "error">("init");
+  const [state, setState] = useState<"init" | "scanning" | "denied" | "error">("init");
   const videoRef = useRef<HTMLVideoElement>(null);
   const stopRef = useRef<(() => void) | null>(null);
 
@@ -39,18 +47,10 @@ export function BarcodeScanner({
   }
 
   useEffect(() => {
-    if (!open) return;
-    const Ctor: BarcodeDetectorCtor | undefined = (window as unknown as {
-      BarcodeDetector?: BarcodeDetectorCtor;
-    }).BarcodeDetector;
-
-    if (!Ctor) {
-      setState("unsupported");
-      return;
-    }
-
+    if (!open || !scannerSupported()) return;
     let cancelled = false;
     let stream: MediaStream | null = null;
+    const Ctor = (window as unknown as { BarcodeDetector: BarcodeDetectorCtor }).BarcodeDetector;
     const detector = new Ctor({ formats: FORMATS });
 
     (async () => {
@@ -129,26 +129,26 @@ export function BarcodeScanner({
             </DialogDescription>
           </DialogHeader>
 
-          {state === "init" && (
+          {!scannerSupported() && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400">
+              متصفحك لا يدعم المسح بالكاميرا — استخدم Chrome على أندرويد، أو القارئ الخارجي
+              الذي يكتب في حقل البحث مباشرة.
+            </div>
+          )}
+
+          {state === "init" && scannerSupported() && (
             <div className="flex flex-col items-center gap-3 py-8">
               <Loader2 className="size-7 animate-spin text-teal-600" />
               <p className="text-sm text-muted-foreground">جارٍ تشغيل الكاميرا…</p>
             </div>
           )}
 
-          {state === "scanning" && (
+          {state === "scanning" && scannerSupported() && (
             <div className="overflow-hidden rounded-xl border bg-black">
               <video ref={videoRef} className="h-64 w-full object-cover" muted playsInline />
               <div className="bg-teal-600/90 py-1.5 text-center text-xs font-bold text-white">
                 بانتظار الباركود…
               </div>
-            </div>
-          )}
-
-          {state === "unsupported" && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400">
-              متصفحك لا يدعم المسح بالكاميرا — استخدم Chrome على أندرويد، أو القارئ الخارجي
-              الذي يكتب في حقل البحث مباشرة.
             </div>
           )}
 
