@@ -35,3 +35,10 @@ jobs:
         run: bun run build
         env:
           DATABASE_URL: file:./db/ci.db
+
+      # الاختبارات الحية: خادم إنتاجي حقيقي + قاعدة بيانات حقيقية + HTTP فعلي
+      - name: Live E2E suite (real server, real DB)
+        run: bun run test:e2e
+        env:
+          DATABASE_URL: file:./db/e2e.db
+          AUTH_SECRET: ci-e2e-secret-not-for-production
