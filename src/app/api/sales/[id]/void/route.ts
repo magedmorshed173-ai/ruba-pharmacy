@@ -1,0 +1,54 @@
+import { NextRequest } from "next/server";
+import { db } from "@/lib/db";
+import { fail, ok, requireRole } from "@/lib/api-guard";
+
+// POST /api/sales/:id/void — إلغاء بيع واسترجاع المخزون (صيدلي فما فوق)
+export async function POST(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { user, error } = await requireRole("pharmacist");
+  if (error) return error;
+
+  const { id } = await params;
+  try {
+    await db.$transaction(async (tx) => {
+      const sale = await tx.sale.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+      if (!sale) throw new Error("NOT_FOUND");
+      if (sale.status === "void") throw new Error("ALREADY_VOID");
+
+      for (const item of sale.items) {
+        const med = await tx.medicine.findUnique({ where: { id: item.medicineId } });
+        if (!med) continue;
+        const newQty = med.quantity + item.quantity;
+        await tx.medicine.update({
+          where: { id: med.id },
+          data: { quantity: newQty },
+        });
+        await tx.stockMovement.create({
+          data: {
+            medicineId: med.id,
+            type: "return",
+            delta: item.quantity,
+            balanceAfter: newQty,
+            reference: `VOID-${sale.reference}`,
+            userId: user.id,
+          },
+        });
+      }
+
+      await tx.sale.update({ where: { id }, data: { status: "void" } });
+    });
+
+    return ok({ message: "تم إلغاء الفاتورة وإرجاع الكميات للمخزون" });
+  } catch (e) {
+    if (e instanceof Error) {
+      if (e.message === "NOT_FOUND") return fail("الفاتورة غير موجودة", 404);
+      if (e.message === "ALREADY_VOID") return fail("الفاتورة ملغاة مسبقاً");
+    }
+    return fail("تعذر إلغاء الفاتورة", 500);
+  }
+}

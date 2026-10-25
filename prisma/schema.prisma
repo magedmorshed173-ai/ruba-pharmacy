@@ -1,0 +1,165 @@
+// ربي فارمسي — Ruba Pharmacy Platform v3.0 (Web)
+// ملاحظة هندسية: SQLite لا يدعم Decimal في Prisma، لذا تُخزَّن النقود
+// كأعداد صحيحة بالهللات (1 ريال = 100 هللة) — المعيار العالمي للدقة المالية.
+// الكميات تُخزَّن كأعداد صحيحة (وحدات) — يوحِّد عدم اتساق v2.0 (Decimal مقابل Int).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── المستخدمون والأدوار ─────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String // bcrypt hash
+  fullName  String
+  role      String   @default("technician") // admin | pharmacist | technician
+  phone     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales          Sale[]
+  stockMovements StockMovement[]
+}
+
+// ───────────────────────────── المخزون ─────────────────────────────
+
+model Category {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+  medicines   Medicine[]
+}
+
+model Medicine {
+  id                   String   @id @default(cuid())
+  name                 String
+  genericName          String // الاسم العلمي — أساس فحص التداخلات
+  categoryId           String
+  category             Category @relation(fields: [categoryId], references: [id])
+  manufacturer         String?
+  barcode              String   @unique
+  purchasePrice        Int      @default(0) // هللات
+  sellingPrice         Int // هللات
+  quantity             Int      @default(0) // وحدات
+  minQuantity          Int      @default(0) // حد التنبيه
+  expiryDate           DateTime
+  productionDate       DateTime?
+  dosage               String? // الجرعة (مثل 500mg)
+  requiresPrescription Boolean  @default(false)
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  saleItems SaleItem[]
+  movements StockMovement[]
+
+  @@index([genericName, dosage])
+  @@index([expiryDate])
+  @@index([name])
+}
+
+model DrugInteraction {
+  id          String  @id @default(cuid())
+  genericA    String
+  genericB    String
+  severity    String // major | moderate | minor
+  description String
+  management  String?
+  isActive    Boolean @default(true)
+
+  @@unique([genericA, genericB])
+  @@index([genericA])
+  @@index([genericB])
+}
+
+model StockMovement {
+  id           String   @id @default(cuid())
+  medicineId   String
+  medicine     Medicine @relation(fields: [medicineId], references: [id])
+  type         String // sale | restock | adjust | return
+  delta        Int // موجب = إضافة، سالب = خصم
+  balanceAfter Int
+  reference    String?
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([medicineId])
+  @@index([createdAt])
+}
+
+// ───────────────────────────── المبيعات ─────────────────────────────
+
+model Sale {
+  id            String   @id @default(cuid())
+  customerName  String   @default("عميل نقدي")
+  customerPhone String?
+  itemsCount    Int
+  totalAmount   Int // هللات
+  discount      Int      @default(0) // هللات
+  netAmount     Int // هللات
+  paymentMethod String   @default("cash") // cash | card | insurance
+  status        String   @default("completed") // completed | void
+  reference     String   @unique // Idempotency — معرّف العملية الفريد
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  saleDate      DateTime @default(now())
+
+  items SaleItem[]
+
+  @@index([saleDate])
+  @@index([userId])
+}
+
+model SaleItem {
+  id           String   @id @default(cuid())
+  saleId       String
+  sale         Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  medicineId   String
+  medicine     Medicine @relation(fields: [medicineId], references: [id])
+  medicineName String
+  quantity     Int
+  unitPrice    Int // هللات
+  subtotal     Int // هللات
+
+  @@index([saleId])
+  @@index([medicineId])
+}
+
+// ───────────────────────────── المرضى ─────────────────────────────
+
+model Patient {
+  id                 String   @id @default(cuid())
+  name               String
+  nationalId         String   @unique
+  phone              String?
+  chronicMedications String?
+  allergies          String?
+  createdAt          DateTime @default(now())
+
+  @@index([name])
+  @@index([phone])
+}
+
+// ──────────────────────────── الإشعارات ────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  kind      String // expiry | low_stock | info
+  title     String
+  body      String?
+  isRead    Boolean  @default(false)
+  dedupeKey String?  @unique // إصلاح: منع التكرار بمفتاح فريد بدل title__contains
+  createdAt DateTime @default(now())
+
+  @@index([isRead])
+  @@index([createdAt])
+}
