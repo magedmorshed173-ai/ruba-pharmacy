@@ -60,7 +60,7 @@
 
 - **SQLite → PostgreSQL**: متبقى قراراً بسيطاً (تبديل provider) — مؤجل حتى تعدد الفروع.
 - **Rate limiter في الذاكرة**: كافٍ لنسخة واحدة (VPS/Docker). عند التوسع الأفقي يُستبدل بـ Redis خلف نفس الواجهة (مُوثَّق في الكود).
-- **CI**: ملف `.github/workflows/ci.yml` جاهز محلياً (`ci-workflow-pending.yml`) بانتظار صلاحية `workflow` في التوكن — يُدمج فور توفرها وسيشمل `bun run test`.
+- **CI**: مفعّل الآن على GitHub Actions (lint + build إنتاجي + الاختبارات الـ19) عند كل push/PR — فُعّل عبر Deploy Key مؤقت تجاوز قيد صلاحية `workflow` في التوكن، ثم حُذف المفتاح.
 
 ## 5) الحكم النهائي
 
