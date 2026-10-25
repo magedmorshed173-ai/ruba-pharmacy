@@ -1,4 +1,5 @@
 import { requireAuth, fail, ok } from "@/lib/api-guard";
+import { db } from "@/lib/db";
 
 export async function GET() {
   const { user, error } = await requireAuth();

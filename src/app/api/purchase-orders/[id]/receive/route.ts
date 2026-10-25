@@ -20,7 +20,7 @@ export async function POST(
     const result = await db.$transaction(async (tx) => {
       const po = await tx.purchaseOrder.findUnique({
         where: { id },
-        include: { items: { include: { medicine: true } } },
+        include: { supplier: true, items: { include: { medicine: true } } },
       });
       if (!po) throw new Error("PO_NOT_FOUND");
       if (po.status === "received") throw new Error("ALREADY_RECEIVED");
