@@ -13,6 +13,7 @@ import { ReportsView } from "./reports-view";
 import { NotificationsView } from "./notifications-view";
 import { UsersView } from "./users-view";
 import { SettingsView } from "./settings-view";
+import { LoginAuditsCard } from "./login-audits-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -293,14 +294,19 @@ export function AppShell() {
           {view === "inventory" && <InventoryView user={user} />}
           {view === "suppliers" && user.role !== "technician" && <SuppliersView user={user} />}
           {view === "patients" && <PatientsView user={user} />}
-          {view === "reports" && <ReportsView />}
+          {view === "reports" && <ReportsView user={user} />}
           {view === "notifications" && <NotificationsView onRead={refreshUnread} />}
-          {view === "users" && user.role === "admin" && <UsersView />}
+          {view === "users" && user.role === "admin" && (
+            <div className="space-y-4">
+              <UsersView />
+              <LoginAuditsCard />
+            </div>
+          )}
           {view === "settings" && <SettingsView user={user} onLogout={logout} />}
         </main>
 
         <footer className="mt-auto border-t bg-card/60 py-3 text-center text-xs text-muted-foreground">
-          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 3.2
+          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 3.3
         </footer>
       </div>
     </div>

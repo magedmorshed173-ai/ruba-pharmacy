@@ -35,14 +35,20 @@ export async function POST(request: NextRequest) {
     }
 
     const user = await db.user.findUnique({ where: { username } });
-    if (!user || !user.isActive)
+    if (!user || !user.isActive) {
+      await recordLoginAudit(username, false, ip, request);
       return fail("بيانات الدخول غير صحيحة أو الحساب موقوف", 401);
+    }
 
     const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return fail("بيانات الدخول غير صحيحة", 401);
+    if (!valid) {
+      await recordLoginAudit(username, false, ip, request);
+      return fail("بيانات الدخول غير صحيحة", 401);
+    }
 
     // نجاح الدخول → تصفير عدّاد المحاولات
     loginLimiter.reset(`${username}:${ip}`);
+    await recordLoginAudit(username, true, ip, request, user.id);
 
     const session = {
       id: user.id,
@@ -66,5 +72,28 @@ export async function POST(request: NextRequest) {
     return res;
   } catch {
     return fail("تعذر تسجيل الدخول", 500);
+  }
+}
+
+/** تسجيل كل محاولة دخول (v3.3) — لا يكسر مسار الدخول أبداً */
+async function recordLoginAudit(
+  username: string,
+  success: boolean,
+  ip: string,
+  request: NextRequest,
+  userId?: string
+) {
+  try {
+    await db.loginAudit.create({
+      data: {
+        username: username.slice(0, 80),
+        userId: userId ?? null,
+        success,
+        ip,
+        userAgent: (request.headers.get("user-agent") ?? "").slice(0, 250) || null,
+      },
+    });
+  } catch {
+    /* التدقيق لا يعطّل الدخول */
   }
 }

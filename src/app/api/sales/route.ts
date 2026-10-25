@@ -80,6 +80,7 @@ export async function POST(request: NextRequest) {
             quantity: number;
             unitPrice: number;
             subtotal: number;
+            costHalalas: number; // لقطة تكلفة الدفعات المخصومة فعلياً (FEFO)
             newQty: number;
           }[] = [];
           const batchDeductions: {
@@ -115,21 +116,25 @@ export async function POST(request: NextRequest) {
 
             const subtotal = med.sellingPrice * qty; // أعداد صحيحة — دقة مطلقة
             total += subtotal;
+            let itemCost = 0;
             prepared.push({
               medicineId: med.id,
               medicineName: med.name,
               quantity: qty,
               unitPrice: med.sellingPrice,
               subtotal,
+              costHalalas: 0,
               newQty: med.quantity - qty,
             });
             for (const a of allocations) {
               const srcBatch = batches.find((b) => b.id === a.batchId)!;
+              itemCost += a.quantity * srcBatch.unitCost; // التكلفة الفعلية للدفعة
               batchDeductions.push({
                 batchId: a.batchId,
                 newBatchQty: srcBatch.quantity - a.quantity,
               });
             }
+            prepared[prepared.length - 1].costHalalas = itemCost;
           }
 
           if (discount > total) throw new Error("الخصم أكبر من الإجمالي");
@@ -153,6 +158,7 @@ export async function POST(request: NextRequest) {
                   quantity: p.quantity,
                   unitPrice: p.unitPrice,
                   subtotal: p.subtotal,
+                  costHalalas: p.costHalalas,
                 })),
               },
             },

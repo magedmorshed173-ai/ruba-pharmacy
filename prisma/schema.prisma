@@ -204,9 +204,24 @@ model SaleItem {
   quantity     Int
   unitPrice    Int // هللات
   subtotal     Int // هللات
+  costHalalas  Int @default(0) // لقطة تكلفة الدفعات (FEFO) وقت البيع — أساس تقارير الأرباح
 
   @@index([saleId])
   @@index([medicineId])
+}
+
+// سجل تدقيق الدخول — كل محاولة (نجاح/فشل) مع IP ووكيل المتصفح
+model LoginAudit {
+  id        String   @id @default(cuid())
+  username  String // الاسم المُحاول كما كُتب
+  userId    String? // يُملأ عند النجاح فقط
+  success   Boolean
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([username])
 }
 
 // ───────────────────────────── المرضى ─────────────────────────────

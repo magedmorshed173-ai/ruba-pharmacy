@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api, fmtMoney, fmtNum, fmtDate } from "@/lib/api-client";
+import type { AuthUser } from "@/lib/types";
 import { StatCard, LoadingRows } from "./shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,9 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  AreaChart,
+  Area,
+  Legend,
 } from "recharts";
 import { toast } from "sonner";
 import {
@@ -33,6 +37,8 @@ import {
   Download,
   Loader2,
   Trophy,
+  PiggyBank,
+  Percent,
 } from "lucide-react";
 
 interface SalesReport {
@@ -56,10 +62,44 @@ interface RestockRow {
   suggestedOrder: number;
 }
 
-export function ReportsView() {
+interface ProfitReport {
+  days: number;
+  summary: {
+    revenue: number;
+    cogs: number;
+    profit: number;
+    marginPct: number;
+    knownCostItems: number;
+    unknownCostItems: number;
+  };
+  byMedicine: {
+    name: string;
+    quantity: number;
+    revenue: number;
+    cost: number;
+    profit: number;
+    marginPct: number;
+  }[];
+  series: { date: string; revenue: number; profit: number }[];
+  note?: string | null;
+}
+
+export function ReportsView({ user }: { user: AuthUser }) {
   const [report, setReport] = useState<SalesReport | null>(null);
   const [restock, setRestock] = useState<RestockRow[] | null>(null);
   const [exporting, setExporting] = useState(false);
+  const canSeeProfit = user.role === "admin" || user.role === "pharmacist";
+  const [profit, setProfit] = useState<ProfitReport | null>(null);
+  const [profitDays, setProfitDays] = useState(30);
+
+  const loadProfit = useCallback(async (days: number) => {
+    try {
+      const r = await api<ProfitReport>(`/api/reports/profit?days=${days}`);
+      setProfit(r);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر حساب الأرباح");
+    }
+  }, []);
 
   useEffect(() => {
     api<SalesReport>("/api/reports/sales?days=14")
@@ -112,11 +152,18 @@ export function ReportsView() {
 
   return (
     <div className="space-y-6">
-      <Tabs defaultValue="sales" dir="rtl">
+      <Tabs defaultValue="sales" dir="rtl" onValueChange={(v) => {
+        if (v === "profit" && profit === null) loadProfit(profitDays);
+      }}>
         <TabsList className="h-10">
           <TabsTrigger value="sales" className="px-4">
             <TrendingUp className="size-4" /> المبيعات
           </TabsTrigger>
+          {canSeeProfit && (
+            <TabsTrigger value="profit" className="px-4">
+              <PiggyBank className="size-4" /> الأرباح
+            </TabsTrigger>
+          )}
           <TabsTrigger value="restock" className="px-4">
             <PackagePlus className="size-4" /> إعادة الطلب الذكية
           </TabsTrigger>
@@ -231,6 +278,150 @@ export function ReportsView() {
               )}
             </div>
           </div>
+        </TabsContent>
+
+        {/* تبويب الأرباح (v3.3) — بالتكلفة الفعلية للدفعات */}
+        <TabsContent value="profit" className="mt-4 space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">الفترة:</span>
+            {[7, 30, 90].map((d) => (
+              <button
+                key={d}
+                onClick={() => {
+                  setProfitDays(d);
+                  loadProfit(d);
+                }}
+                className={`num rounded-lg px-3 py-1.5 text-sm font-bold transition ${
+                  profitDays === d
+                    ? "bg-teal-600 text-white"
+                    : "border bg-card text-muted-foreground hover:bg-accent"
+                }`}
+              >
+                {d} يوم
+              </button>
+            ))}
+          </div>
+
+          {profit === null ? (
+            <div className="flex justify-center py-16">
+              <Loader2 className="size-7 animate-spin text-teal-600" />
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
+                <StatCard
+                  title="صافي الإيراد"
+                  value={profit.summary.revenue}
+                  isMoney
+                  icon={<Banknote className="size-5" />}
+                  tone="teal"
+                  sub={`${profit.days} يوماً`}
+                />
+                <StatCard
+                  title="تكلفة المبيعات"
+                  value={profit.summary.cogs}
+                  isMoney
+                  icon={<PackagePlus className="size-5" />}
+                  tone="amber"
+                  sub="تكلفة الدفعات الفعلية"
+                />
+                <StatCard
+                  title="الربح الإجمالي"
+                  value={profit.summary.profit}
+                  isMoney
+                  icon={<PiggyBank className="size-5" />}
+                  tone={profit.summary.profit >= 0 ? "emerald" : "rose"}
+                  sub="إيراد − تكلفة"
+                />
+                <StatCard
+                  title="هامش الربح"
+                  value={profit.summary.marginPct}
+                  icon={<Percent className="size-5" />}
+                  tone="violet"
+                  sub="من كل 100 ر.س إيراد"
+                />
+              </div>
+
+              {profit.note && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400">
+                  {profit.note}
+                </p>
+              )}
+
+              <div className="rounded-xl border bg-card p-4 shadow-sm">
+                <h3 className="mb-4 font-bold">الإيراد والربح يومياً</h3>
+                <div className="h-64" dir="ltr">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={profit.series} margin={{ left: 8, right: 8 }}>
+                      <defs>
+                        <linearGradient id="gRev" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#0D9488" stopOpacity={0.35} />
+                          <stop offset="100%" stopColor="#0D9488" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="gPro" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.3} />
+                          <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5ebeb" vertical={false} />
+                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#6b7a7a" }} tickFormatter={(v: string) => v.slice(5)} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: "#6b7a7a" }} tickFormatter={(v: number) => `${Math.round(v / 100)}`} axisLine={false} tickLine={false} width={40} />
+                      <Tooltip
+                        formatter={(v: number | string, n) => [
+                          `${fmtMoney(Number(v))} ر.س`,
+                          n === "revenue" ? "الإيراد" : "الربح",
+                        ]}
+                        contentStyle={{ borderRadius: 12, fontFamily: "inherit", direction: "rtl" }}
+                      />
+                      <Legend formatter={(v) => (v === "revenue" ? "الإيراد" : "الربح")} />
+                      <Area type="monotone" dataKey="revenue" stroke="#0D9488" strokeWidth={2} fill="url(#gRev)" />
+                      <Area type="monotone" dataKey="profit" stroke="#8b5cf6" strokeWidth={2} fill="url(#gPro)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+                <div className="border-b p-3">
+                  <h3 className="font-bold">ربحية الأدوية — الأعلى ربحاً</h3>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>الدواء</TableHead>
+                      <TableHead className="text-center">الكمية</TableHead>
+                      <TableHead>الإيراد</TableHead>
+                      <TableHead>التكلفة</TableHead>
+                      <TableHead>الربح</TableHead>
+                      <TableHead className="text-center">الهامش</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {profit.byMedicine.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                          لا مبيعات في هذه الفترة
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      profit.byMedicine.map((m) => (
+                        <TableRow key={m.name}>
+                          <TableCell className="text-sm font-medium">{m.name}</TableCell>
+                          <TableCell className="num text-center">{fmtNum(m.quantity)}</TableCell>
+                          <TableCell className="num text-sm">{fmtMoney(m.revenue)}</TableCell>
+                          <TableCell className="num text-sm text-muted-foreground">{fmtMoney(m.cost)}</TableCell>
+                          <TableCell className={`num text-sm font-bold ${m.profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600"}`}>
+                            {fmtMoney(m.profit)}
+                          </TableCell>
+                          <TableCell className="num text-center text-xs">{m.marginPct}%</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
         </TabsContent>
 
         {/* تبويب إعادة الطلب */}
