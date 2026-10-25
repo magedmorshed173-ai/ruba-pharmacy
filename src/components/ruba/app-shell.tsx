@@ -39,6 +39,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { ROLE_LABEL } from "@/lib/role-label";
+import { useTheme } from "next-themes";
+import { Sun, Moon } from "lucide-react";
 
 type ViewKey =
   | "dashboard"
@@ -68,6 +70,7 @@ export function AppShell() {
   const [view, setView] = useState<ViewKey>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [unread, setUnread] = useState(0);
+  const { resolvedTheme, setTheme } = useTheme();
 
   const refreshUnread = useCallback(async () => {
     try {
@@ -221,6 +224,15 @@ export function AppShell() {
           </h1>
 
           <div className="ms-auto flex items-center gap-2">
+            <button
+              onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+              className="rounded-lg p-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
+              aria-label="تبديل الوضع الليلي"
+              title="الوضع الليلي / النهاري"
+            >
+              <Sun className="size-5 dark:hidden" />
+              <Moon className="hidden size-5 dark:block" />
+            </button>
             <button
               onClick={() => {
                 setView("notifications");

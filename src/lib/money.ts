@@ -16,16 +16,21 @@ export function formatSar(halalas: number | string): string {
   return `${value.toFixed(2)} ر.س`;
 }
 
-/** جمع آمن بالهللات */
+/** جمع آمن بالهللات (أعداد صحيحة) — النتيجة عدد صحيح بلا كسور */
 export function sumHalalas(...values: (number | string)[]): number {
   return values.reduce(
-    (acc, v) => new Decimal(acc).plus(new Decimal(v ?? 0)).toNumber(),
+    (acc, v) => acc + Math.round(new Decimal(v ?? 0).toNumber()),
     0
   );
 }
 
 export function toInt(value: unknown, fallback = 0): number {
-  const d = new Decimal(String(value ?? fallback));
-  if (!d.isFinite()) return fallback;
-  return d.toDecimalPlaces(0).toNumber();
+  try {
+    const d = new Decimal(String(value ?? fallback));
+    if (!d.isFinite()) return fallback;
+    return d.toDecimalPlaces(0).toNumber();
+  } catch {
+    // مدخل غير رقمي (مثل "abc") — لا يجوز أن يُسقط الطلب (إصلاح v3.1)
+    return fallback;
+  }
 }

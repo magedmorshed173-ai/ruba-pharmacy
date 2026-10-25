@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { fail, ok, requireAuth } from "@/lib/api-guard";
 import { toInt } from "@/lib/money";
+import { allocateFefo } from "@/lib/fefo";
 
 interface CheckoutItem {
   barcode?: string;
@@ -81,6 +82,10 @@ export async function POST(request: NextRequest) {
             subtotal: number;
             newQty: number;
           }[] = [];
+          const batchDeductions: {
+            batchId: string;
+            newBatchQty: number;
+          }[] = [];
 
           for (const item of items) {
             const qty = toInt(item.quantity, 0);
@@ -90,10 +95,23 @@ export async function POST(request: NextRequest) {
               ? medMap.get(String(item.barcode).trim())
               : idMap.get(String(item.medicineId));
             if (!med) throw new Error(`دواء غير موجود في السلة`);
-            if (med.expiryDate.getTime() <= today.getTime())
-              throw new Error(`منتهي الصلاحية: ${med.name}`);
             if (med.quantity < qty)
               throw new Error(`مخزون غير كافٍ: ${med.name} (المتوفر ${med.quantity})`);
+
+            // ── FEFO: الخصم من الدفعات الأقرب انتهاءً، وتجاهل المنتهية ──
+            const batches = await tx.batch.findMany({
+              where: { medicineId: med.id, isActive: true, quantity: { gt: 0 } },
+              orderBy: { expiryDate: "asc" },
+            });
+            const { allocations, shortfall } = allocateFefo(batches, qty, today);
+            if (shortfall > 0) {
+              const sellable = allocations.reduce((a, x) => a + x.quantity, 0);
+              throw new Error(
+                shortfall > 0 && sellable === 0
+                  ? `لا يوجد مخزون صالح الصلاحية: ${med.name} (كل الدفعات منتهية)`
+                  : `المتوفر الصالح أقل من المطلوب: ${med.name} (الصالح ${sellable})`
+              );
+            }
 
             const subtotal = med.sellingPrice * qty; // أعداد صحيحة — دقة مطلقة
             total += subtotal;
@@ -105,6 +123,13 @@ export async function POST(request: NextRequest) {
               subtotal,
               newQty: med.quantity - qty,
             });
+            for (const a of allocations) {
+              const srcBatch = batches.find((b) => b.id === a.batchId)!;
+              batchDeductions.push({
+                batchId: a.batchId,
+                newBatchQty: srcBatch.quantity - a.quantity,
+              });
+            }
           }
 
           if (discount > total) throw new Error("الخصم أكبر من الإجمالي");
@@ -146,6 +171,28 @@ export async function POST(request: NextRequest) {
                 balanceAfter: p.newQty,
                 reference,
                 userId: user.id,
+              },
+            });
+          }
+          // خصم الكميات من الدفعات نفسها (FEFO)
+          for (const d of batchDeductions) {
+            await tx.batch.update({
+              where: { id: d.batchId },
+              data: { quantity: d.newBatchQty },
+            });
+          }
+          // مزامنة «أقرب صلاحية» على مستوى الدواء مع الدفعات المتبقية
+          for (const p of prepared) {
+            const nearest = await tx.batch.findFirst({
+              where: { medicineId: p.medicineId, isActive: true, quantity: { gt: 0 } },
+              orderBy: { expiryDate: "asc" },
+            });
+            await tx.medicine.update({
+              where: { id: p.medicineId },
+              data: {
+                expiryDate: nearest
+                  ? nearest.expiryDate
+                  : new Date(0), // لا مخزون متبقٍّ
               },
             });
           }

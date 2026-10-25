@@ -161,3 +161,22 @@ input[type="number"] {
   direction: ltr;
   text-align: start;
 }
+
+/* ─────────── طباعة الفاتورة (نافذة نجاح البيع فقط) ─────────── */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-receipt,
+  .print-receipt * {
+    visibility: visible;
+  }
+  .print-receipt {
+    position: fixed !important;
+    inset: 0 !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+}

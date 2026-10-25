@@ -54,8 +54,10 @@ import {
   Tags,
   X,
   ArrowDownUp,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BatchesDialog } from "./batches-dialog";
 
 const RANK: Record<string, number> = { technician: 1, pharmacist: 2, admin: 3 };
 
@@ -97,6 +99,7 @@ export function InventoryView({ user }: { user: AuthUser }) {
 
   const [movementsTarget, setMovementsTarget] = useState<Medicine | null>(null);
   const [movements, setMovements] = useState<StockMovement[] | null>(null);
+  const [batchesTarget, setBatchesTarget] = useState<Medicine | null>(null);
 
   const [catsOpen, setCatsOpen] = useState(false);
   const [newCat, setNewCat] = useState("");
@@ -403,6 +406,9 @@ export function InventoryView({ user }: { user: AuthUser }) {
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => setRestockTarget(m)}>
                                   <PackagePlus className="size-4" /> تعبئة مخزون
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setBatchesTarget(m)}>
+                                  <Layers className="size-4" /> دفعات التشغيلة (LOT)
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                               </>
@@ -712,6 +718,14 @@ export function InventoryView({ user }: { user: AuthUser }) {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* حوار دفعات التشغيلة (LOT) */}
+      <BatchesDialog
+        medicine={batchesTarget ? { id: batchesTarget.id, name: batchesTarget.name, quantity: batchesTarget.quantity } : null}
+        canManage={canManage}
+        onClose={() => setBatchesTarget(null)}
+        onChanged={() => load()}
+      />
     </div>
   );
 }

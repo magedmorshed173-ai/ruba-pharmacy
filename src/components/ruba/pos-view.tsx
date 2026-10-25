@@ -39,6 +39,7 @@ import {
   CheckCircle2,
   TriangleAlert,
   PillBottle,
+  Printer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -47,12 +48,33 @@ interface CartLine {
   quantity: number;
 }
 
+interface SaleFullItem {
+  medicineName: string;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+}
+
+interface SaleFull {
+  reference: string;
+  saleDate: string;
+  customerName: string;
+  itemsCount: number;
+  totalAmount: number;
+  discount: number;
+  netAmount: number;
+  paymentMethod: string;
+  items: SaleFullItem[];
+  user?: { username: string; fullName: string };
+}
+
 interface CheckoutResult {
   saleId: string;
   reference: string;
   netAmount: number;
   duplicated?: boolean;
   interactionWarnings?: InteractionHit[];
+  sale?: SaleFull;
 }
 
 export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void }) {
@@ -434,7 +456,7 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
 
       {/* نافذة النجاح */}
       <Dialog open={!!result} onOpenChange={(o) => !o && setResult(null)}>
-        <DialogContent className="sm:max-w-md" dir="rtl">
+        <DialogContent className="sm:max-w-md print-receipt" dir="rtl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-teal-700 dark:text-teal-400">
               <CheckCircle2 className="size-6" />
@@ -443,11 +465,11 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
             <DialogDescription>
               {result?.duplicated
                 ? "هذه العملية كانت مسجلة مسبقاً — لم يُخصم المخزون مرتين"
-                : `تم تسجيل الفاتورة وخصم الكميات من المخزون`}
+                : `تم تسجيل الفاتورة وخصم الكميات من المخزون (FEFO)`}
             </DialogDescription>
           </DialogHeader>
           {result && (
-            <div className="space-y-2 rounded-xl border bg-muted/40 p-4 text-sm">
+            <div className="space-y-3 rounded-xl border bg-muted/40 p-4 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">رقم المرجع</span>
                 <span className="num font-bold" dir="ltr">{result.reference}</span>
@@ -463,10 +485,55 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
                   ⚠ رُصدت {result.interactionWarnings!.length} تداخلات دوائية في هذه الفاتورة — راجع سجلها في الإشعارات
                 </p>
               )}
+
+              {/* فاتورة قابلة للطباعة */}
+              {result.sale && (
+                <div className="rounded-lg border-t border-dashed pt-3 text-xs">
+                  <p className="mb-1 text-center text-sm font-extrabold">ربي فارمسي</p>
+                  <p className="mb-2 text-center text-muted-foreground">
+                    {new Date(result.sale.saleDate).toLocaleString("ar-SA")} — البائع: {result.sale.user?.fullName ?? "—"}
+                  </p>
+                  <table className="w-full">
+                    <tbody>
+                      {result.sale.items.map((it, i) => (
+                        <tr key={i} className="border-b border-dashed">
+                          <td className="py-1 font-medium">{it.medicineName}</td>
+                          <td className="num py-1 text-center">×{it.quantity}</td>
+                          <td className="num py-1 text-end">{fmtMoney(it.subtotal)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>الإجمالي</span>
+                      <span className="num">{fmtMoney(result.sale.totalAmount)} ر.س</span>
+                    </div>
+                    {result.sale.discount > 0 && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>الخصم</span>
+                        <span className="num">−{fmtMoney(result.sale.discount)} ر.س</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-base font-extrabold">
+                      <span>الصافي ({result.sale.paymentMethod === "cash" ? "نقدي" : result.sale.paymentMethod === "card" ? "شبكة" : "تأمين"})</span>
+                      <span className="num">{fmtMoney(result.sale.netAmount)} ر.س</span>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-center text-[10px] text-muted-foreground">شكراً لثقتكم — نتمنى لكم دوام الصحة والعافية</p>
+                </div>
+              )}
             </div>
           )}
-          <DialogFooter>
-            <Button onClick={() => setResult(null)} className="w-full bg-teal-600 hover:bg-teal-700">
+          <DialogFooter className="flex-row gap-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => window.print()}
+            >
+              <Printer className="size-4" /> طباعة الفاتورة
+            </Button>
+            <Button onClick={() => setResult(null)} className="flex-1 bg-teal-600 hover:bg-teal-700">
               عملية جديدة
             </Button>
           </DialogFooter>

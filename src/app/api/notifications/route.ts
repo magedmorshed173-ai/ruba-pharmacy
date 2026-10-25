@@ -56,10 +56,22 @@ export async function PUT() {
     const dayKey = now.toISOString().slice(0, 10);
     let created = 0;
 
-    // قرب انتهاء الصلاحية (خلال 90 يوماً)
-    const expiring = await db.medicine.findMany({
-      where: { isActive: true, expiryDate: { gt: today, lte: in90 } },
-      select: { id: true, name: true, barcode: true, expiryDate: true, quantity: true },
+    // قرب انتهاء الصلاحية — على مستوى الدفعة (LOT) لأدق تنبيه
+    const expiringBatches = await db.batch.findMany({
+      where: { isActive: true, quantity: { gt: 0 }, expiryDate: { gt: today, lte: in90 } },
+      select: {
+        id: true, lotNumber: true, expiryDate: true, quantity: true,
+        medicine: { select: { id: true, name: true } },
+      },
+    });
+
+    // دفعات منتهية لا تزال بالرصيد — يجب سحبها/إتلافها
+    const expiredBatches = await db.batch.findMany({
+      where: { isActive: true, quantity: { gt: 0 }, expiryDate: { lte: today } },
+      select: {
+        id: true, lotNumber: true, expiryDate: true, quantity: true,
+        medicine: { select: { id: true, name: true } },
+      },
     });
 
     // نقص المخزون
@@ -69,11 +81,17 @@ export async function PUT() {
     });
 
     const ops = [
-      ...expiring.map((m) => ({
+      ...expiringBatches.map((b) => ({
         kind: "expiry",
-        title: `قرب انتهاء الصلاحية: ${m.name}`,
-        body: `ينتهي بتاريخ ${m.expiryDate.toISOString().slice(0, 10)} — الكمية المتبقية ${m.quantity}`,
-        dedupeKey: `expiry:${m.id}:${dayKey}`,
+        title: `قرب انتهاء الصلاحية: ${b.medicine.name}`,
+        body: `دفعة ${b.lotNumber} — تنتهي ${b.expiryDate.toISOString().slice(0, 10)} — المتبقي ${b.quantity} وحدة`,
+        dedupeKey: `expiry-batch:${b.id}:${dayKey}`,
+      })),
+      ...expiredBatches.map((b) => ({
+        kind: "expiry",
+        title: `دفعة منتهية الصلاحية: ${b.medicine.name}`,
+        body: `دفعة ${b.lotNumber} انتهت ${b.expiryDate.toISOString().slice(0, 10)} — ${b.quantity} وحدة يجب سحبها من الرفوف فوراً`,
+        dedupeKey: `expired-batch:${b.id}:${dayKey}`,
       })),
       ...low.map((m) => ({
         kind: "low_stock",

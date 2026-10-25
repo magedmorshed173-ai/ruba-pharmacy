@@ -48,9 +48,9 @@ model Medicine {
   barcode              String   @unique
   purchasePrice        Int      @default(0) // هللات
   sellingPrice         Int // هللات
-  quantity             Int      @default(0) // وحدات
+  quantity             Int      @default(0) // وحدات (مجمّع ذاكرة = مجموع الدفعات)
   minQuantity          Int      @default(0) // حد التنبيه
-  expiryDate           DateTime
+  expiryDate           DateTime // أقرب صلاحية معروفة (تُحدَّث مع الدفعات)
   productionDate       DateTime?
   dosage               String? // الجرعة (مثل 500mg)
   requiresPrescription Boolean  @default(false)
@@ -60,10 +60,31 @@ model Medicine {
 
   saleItems SaleItem[]
   movements StockMovement[]
+  batches   Batch[]
 
   @@index([genericName, dosage])
   @@index([expiryDate])
   @@index([name])
+}
+
+// دفعات (LOT) — المعيار العالمي في الصيدليات (Odoo/ERPNext):
+// صلاحية مستقلة لكل دفعة + صرف FEFO (الأقرب انتهاءً يُصرف أولاً)
+model Batch {
+  id         String   @id @default(cuid())
+  medicineId String
+  medicine   Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  lotNumber  String // رقم التشغيلة
+  expiryDate DateTime
+  quantity   Int      @default(0) // وحدات متبقية بالدفعة
+  unitCost   Int      @default(0) // هللات — تكلفة الشراء الفعلية للدفعة
+  supplier   String? // المورد
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([medicineId, lotNumber])
+  @@index([medicineId, isActive])
+  @@index([expiryDate])
 }
 
 model DrugInteraction {

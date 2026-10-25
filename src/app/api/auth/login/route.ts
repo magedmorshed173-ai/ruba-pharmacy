@@ -3,13 +3,36 @@ import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { COOKIE_NAME, signSession, Role } from "@/lib/auth";
 import { fail, ok } from "@/lib/api-guard";
+import { loginLimiter } from "@/lib/rate-limit";
 
+/**
+ * POST /api/auth/login
+ * v3.1 — تعزيز أمني:
+ *  - Rate limiting: 5 محاولات / 15 دقيقة لكل (مستخدم+IP) — يصدّ القوة الغاشمة
+ *  - كوكي Secure في الإنتاج (COOKIE_SECURE=true أو NODE_ENV=production)
+ *  - رسائل خطأ عامة (لا تكشف أي الحقلين خاطئ)
+ */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const username = String(body.username ?? "").trim();
     const password = String(body.password ?? "");
-    if (!username || !password) return fail("اسم المستخدم وكلمة المرور مطلوبان");
+    if (!username || !password)
+      return fail("اسم المستخدم وكلمة المرور مطلوبان");
+
+    // ── حماية القوة الغاشمة ──
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      request.headers.get("x-real-ip") ||
+      "local";
+    const limit = loginLimiter.hit(`${username}:${ip}`);
+    if (!limit.allowed) {
+      return fail(
+        `محاولات كثيرة — أعد المحاولة بعد ${Math.ceil(limit.retryAfterSec / 60)} دقيقة`,
+        429,
+        { retryAfterSec: limit.retryAfterSec }
+      );
+    }
 
     const user = await db.user.findUnique({ where: { username } });
     if (!user || !user.isActive)
@@ -17,6 +40,9 @@ export async function POST(request: NextRequest) {
 
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) return fail("بيانات الدخول غير صحيحة", 401);
+
+    // نجاح الدخول → تصفير عدّاد المحاولات
+    loginLimiter.reset(`${username}:${ip}`);
 
     const session = {
       id: user.id,
@@ -27,10 +53,13 @@ export async function POST(request: NextRequest) {
     const token = await signSession(session);
 
     const res = ok({ user: session });
+    const secureCookie =
+      process.env.COOKIE_SECURE === "true" ||
+      (process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE !== "false");
     res.cookies.set(COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: "lax",
-      secure: false,
+      secure: secureCookie,
       maxAge: 60 * 60 * 24 * 7,
       path: "/",
     });

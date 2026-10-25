@@ -3,6 +3,7 @@ import { Tajawal } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
+import { ThemeProvider } from "@/components/theme-provider";
 
 const tajawal = Tajawal({
   variable: "--font-tajawal",
@@ -36,9 +37,11 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
       <body className={`${tajawal.variable} font-sans antialiased bg-background text-foreground`}>
-        {children}
-        <Toaster />
-        <Sonner position="top-center" richColors dir="rtl" />
+        <ThemeProvider>
+          {children}
+          <Toaster />
+          <Sonner position="top-center" richColors dir="rtl" />
+        </ThemeProvider>
       </body>
     </html>
   );
