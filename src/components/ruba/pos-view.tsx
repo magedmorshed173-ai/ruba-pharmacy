@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, fmtMoney } from "@/lib/api-client";
 import type { AuthUser, Medicine, InteractionHit } from "@/lib/types";
 import { StockBadge, ExpiryBadge } from "./shared";
+import { BarcodeScanner } from "./barcode-scanner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -169,6 +170,10 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
       toast.error("السلة فارغة");
       return;
     }
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      toast.error("أنت دون اتصال — أعد المحاولة عند عودة الشبكة");
+      return;
+    }
     setChecking(true);
     try {
       const r = await api<CheckoutResult>("/api/sales", {
@@ -198,6 +203,25 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
     }
   }
 
+  /** مسح باركود بالكاميرا (v3.4): بحث مطابقة تامة وإضافة للسلة */
+  async function handleScan(code: string) {
+    try {
+      const r = await api<{ results: Medicine[] }>(
+        `/api/medicines?pageSize=5&q=${encodeURIComponent(code)}`
+      );
+      const exact = r.results.find((m) => m.barcode === code);
+      if (exact) {
+        addToCart(exact);
+        toast.success(`أُضيف: ${exact.name}`);
+      } else {
+        toast.warning(`لا يوجد دواء بالباركود ${code}`);
+        setQ(code);
+      }
+    } catch {
+      toast.error("تعذر البحث عن الباركود");
+    }
+  }
+
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_400px]">
       {/* شبكة الأدوية */}
@@ -209,9 +233,10 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="ابحث بالاسم أو الباركود أو المادة الفعالة…"
-            className="h-11 ps-9 text-base"
+            className="h-11 ps-9 pe-10 text-base"
             autoFocus
           />
+          <BarcodeScanner onScan={handleScan} />
         </div>
 
         {medicines === null ? (

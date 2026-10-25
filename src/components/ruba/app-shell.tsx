@@ -14,6 +14,7 @@ import { NotificationsView } from "./notifications-view";
 import { UsersView } from "./users-view";
 import { SettingsView } from "./settings-view";
 import { LoginAuditsCard } from "./login-audits-card";
+import { OfflineBanner } from "./offline-banner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -214,6 +215,7 @@ export function AppShell() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <OfflineBanner />
         {/* الشريط العلوي */}
         <header className="sticky top-0 z-40 flex h-14 items-center gap-3 border-b bg-card/80 px-4 backdrop-blur lg:px-6">
           <Button
@@ -306,7 +308,7 @@ export function AppShell() {
         </main>
 
         <footer className="mt-auto border-t bg-card/60 py-3 text-center text-xs text-muted-foreground">
-          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 3.3
+          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 3.4
         </footer>
       </div>
     </div>
