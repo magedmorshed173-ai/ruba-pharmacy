@@ -63,6 +63,7 @@ export const PAYMENT_LABEL: Record<string, string> = {
 };
 
 export const SEVERITY_LABEL: Record<string, string> = {
+  contraindicated: "ممنوع سريرياً",
   major: "خطير",
   moderate: "متوسط",
   minor: "بسيط",

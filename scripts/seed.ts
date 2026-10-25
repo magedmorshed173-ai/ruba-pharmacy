@@ -49,16 +49,204 @@ const MEDICINES: [string, string, string, string, number, number, number, number
   ["زيرتك أقراص", "cetirizine", "مضادات حساسية", "6281001000081", 7.0, 13.0, 160, 30, 480, "10mg", false, "UCB"],
   ["كلاريتين شراب", "loratadine", "مضادات حساسية", "6281001000082", 11.0, 19.5, 90, 18, 430, "100ml", false, "Bayer"],
   ["أفيل كريم", "ibuprofen topical", "مسكنات وخوافض حرارة", "6281001000083", 14.0, 24.0, 3, 8, 90, "50g", false, "Abbott"],
+  ["سيلدينافيل", "sildenafil", "قلب وأوعية", "6281001000091", 28.0, 49.0, 40, 10, 300, "50mg", true, "Pfizer"],
+  ["إيزوسوربيد دينيترات", "isosorbide dinitrate", "قلب وأوعية", "6281001000092", 9.0, 17.0, 45, 12, 280, "10mg", true, "Ferring"],
 ];
 
-// تداخلات دوائية حقيقية موثقة
-const INTERACTIONS: [string, string, string, string, string][] = [
-  ["warfarin", "aspirin", "major", "زيادة خطر النزف الحاد عند الجمع بين مضاد تجلط ومضاد صفيحات.", "تجنب الجمع إن أمكن؛ وإلا مراقبة INR عن قرب ومراقبة علامات النزف."],
-  ["warfarin", "ibuprofen", "major", "مضادات الالتهاب غير الستيرويدية تزيد تأثير الوارفارين وخطر نزف الجهاز الهضمي.", "استبدل بالباراسيتامول كمسكن آمن مع مراقبة INR."],
-  ["warfarin", "paracetamol", "moderate", "الاستخدام المطول للباراسيتامول بجرعات عالية قد يرفع INR.", "حدد الجرعة لأقل فترة ممكنة وراقب INR بعد 3-5 أيام."],
-  ["ciprofloxacin", "calcium", "moderate", "الكالسيوم يقلل امتصاص السيبروفلوكساسين بشكل كبير.", "أعط المضاد الحيوي قبل ساعتين أو بعد 6 ساعات من مكملات الكالسيوم."],
-  ["amoxicillin", "methotrexate", "moderate", "الأموكسيسيلين يقلل إفراز الميثوتركسات ويزيد سميته.", "راقب تعداد الدم ووظائف الكلى عند الضرورة القصوى للجمع."],
-  ["metformin", "prednisolone", "moderate", "الكورتيزون يرفع سكر الدم ويضعف فعالية الميتفورمين.", "راقب سكر الدم بانتظام وقد يلزم تعديل جرعة الميتفورمين مؤقتاً."],
+// التصنيف التشريحي العلاجي الكيميائي (ATC) — أساس كشف العلاج المكرر
+const ATC_INFO: Record<string, { atcCode: string; atcClass: string; maxDailyDose?: number }> = {
+  paracetamol: { atcCode: "N02BE01", atcClass: "N02B — مسكنات وخوافض حرارة", maxDailyDose: 8 },
+  ibuprofen: { atcCode: "M01AE01", atcClass: "M01A — مضادات التهاب غير ستيرويدية", maxDailyDose: 6 },
+  "ibuprofen topical": { atcCode: "M02AA15", atcClass: "M01A — مضادات التهاب غير ستيرويدية" },
+  diclofenac: { atcCode: "M01AB05", atcClass: "M01A — مضادات التهاب غير ستيرويدية" },
+  aspirin: { atcCode: "B01AC06", atcClass: "B01AC — مضاد صفيحات", maxDailyDose: 8 },
+  amoxicillin: { atcCode: "J01CA04", atcClass: "J01C — مضاد حيوي بيتا-لاكتام" },
+  "amoxicillin/clavulanic": { atcCode: "J01CR02", atcClass: "J01C — مضاد حيوي بيتا-لاكتام" },
+  azithromycin: { atcCode: "J01FA10", atcClass: "J01FA — ماكروليد" },
+  ciprofloxacin: { atcCode: "J01MA02", atcClass: "J01MA — فلوروكينولون" },
+  omeprazole: { atcCode: "A02BC01", atcClass: "A02BC — مثبط مضخة البروتون" },
+  ranitidine: { atcCode: "A02BA02", atcClass: "A02BA — مضاد مستقبلات H2" },
+  "sodium alginate": { atcCode: "A02BX", atcClass: "A02BX — مضاد حموضة موضعي" },
+  metformin: { atcCode: "A10BA02", atcClass: "A10BA — بيجوانيد" },
+  gliclazide: { atcCode: "A10BB09", atcClass: "A10BB — سلفونيل يوريا" },
+  "insulin glargine": { atcCode: "A10AE04", atcClass: "A10AE — أنسولين طويل المفعول" },
+  amlodipine: { atcCode: "C08CA01", atcClass: "C08CA — حاصر قنوات كالسيوم" },
+  losartan: { atcCode: "C09CA01", atcClass: "C09CA — مضاد مستقبلات أنجيوتنسين" },
+  atorvastatin: { atcCode: "C10AA05", atcClass: "C10AA — ستاتين" },
+  warfarin: { atcCode: "B01AA03", atcClass: "B01AA — مضاد تجلط كومارين" },
+  cholecalciferol: { atcCode: "A11CC05", atcClass: "A11CC — فيتامين د" },
+  "vitamin C": { atcCode: "A11GA01", atcClass: "A11G — فيتامين ج" },
+  "ferrous sulfate": { atcCode: "B03AA07", atcClass: "B03A — مكمل حديد" },
+  "omega-3": { atcCode: "C10AX06", atcClass: "C10AX — أوميغا 3" },
+  salbutamol: { atcCode: "R03AC02", atcClass: "R03AC — ناهض بيتا2 قصير" },
+  "budesonide/formoterol": { atcCode: "R03AK07", atcClass: "R03AK — كورتيزون مستنشق مركب" },
+  montelukast: { atcCode: "R03DC03", atcClass: "R03DC — مضاد لوكوترين" },
+  cetirizine: { atcCode: "R06AE07", atcClass: "R06A — مضاد هيستامين جيل ثانٍ" },
+  loratadine: { atcCode: "R06AX13", atcClass: "R06A — مضاد هيستامين جيل ثانٍ" },
+  sildenafil: { atcCode: "G04BE03", atcClass: "G04BE — مثبط PDE5" },
+  "isosorbide dinitrate": { atcCode: "C01DA08", atcClass: "C01DA — نترات عضوية" },
+};
+
+// قاعدة التداخلات السريرية — كل سجل: [المادة أ، المادة ب، الشدة، الوصف، الآلية، الأثر السريري، الإدارة، الأدلة، المصدر، البدء]
+// مصادر التصنيف: Stockley's Drug Interactions، Lexicomp، تحذيرات FDA الرسمية
+type InteractionRow = [string, string, string, string, string, string, string, string, string, string];
+const INTERACTIONS: InteractionRow[] = [
+  ["warfarin", "aspirin", "major",
+    "الجمع بين مضاد تجلط ومضاد صفيحات يضاعف خطر النزف.",
+    "تأثير جمعي على الهيموستاز: تثبيط عوامل فيتامين K + تثبيط تجمع الصفيحات.",
+    "نزف هضمي أو قحفي، كدمات واسعة، ارتفاع INR.",
+    "يُفضَّل الباراسيتامول كمسكن بديل؛ إن اضطر الجمع فأقصر مدة ممكنة مع مراقبة INR وعلامات النزف.",
+    "documented", "Stockley", "rapid"],
+  ["warfarin", "ibuprofen", "major",
+    "مضادات الالتهاب غير الستيرويدية ترفع خطر النزف مع الوارفارين.",
+    "إيذاء الغشاء المخاطي الهضمي + تثبيط الصفيحات + إزاحة الوارفارين عن ارتباطه ببروتينات البلازما.",
+    "نزف هضمي وارتفاع INR.",
+    "تجنّب NSAID تماماً مع الوارفارين — البديل الآمن الباراسيتامول.",
+    "documented", "Stockley", "rapid"],
+  ["warfarin", "paracetamol", "moderate",
+    "الباراسيتامول بجرعات عالية ومستمرة يرفع INR.",
+    "ناتج أيضي (NAPQI) يعيق تجدد فيتامين K المختزل عند الجرعات ≥ 2غ/يوم لأيام متتالية.",
+    "ارتفاع تدريجي في INR.",
+    "لا يتجاوز 2غ/يوم؛ راقب INR بعد 3–5 أيام من البدء أو رفع الجرعة.",
+    "documented", "Stockley", "delayed"],
+  ["warfarin", "metronidazole", "major",
+    "الميترونيدازول يضخّم تأثير الوارفارين بقوة.",
+    "تثبيط CYP2C9 — المسار الأيضي الأساسي لـ S-warfarin.",
+    "ارتفاع حاد في INR ونزف.",
+    "يفضَّل مضاد حيوي بديل؛ إن اضطر الجمع فخفّض جرعة الوارفارين 30–50% وراقب INR كل 2–3 أيام.",
+    "documented", "Lexicomp", "rapid"],
+  ["warfarin", "fluconazole", "major",
+    "الفلوكونازول يرفع تركيز الوارفارين الحر.",
+    "تثبيط CYP2C9 وCYP3A4.",
+    "ارتفاع INR وخطر نزف.",
+    "راقب INR خلال 1–2 يوم من بدء الفلوكونازول واضبط جرعة الوارفارين.",
+    "documented", "Lexicomp", "rapid"],
+  ["warfarin", "amiodarone", "major",
+    "الأميودارون يضخّم تأثير التجلط تراكمياً.",
+    "تثبيط CYP2C9/CYP3A4 يستمر أسابيع حتى بعد إيقاف الدواء.",
+    "تضخم تأثير مضاد التجلط.",
+    "خفّض جرعة الوارفارين 30–50% عند البدء وراقب INR أسبوعياً حتى الاستقرار.",
+    "documented", "Stockley", "delayed"],
+  ["clarithromycin", "simvastatin", "major",
+    "الكلاريثرومايسين يرفع تركيز السيمفاستاتين بشدة.",
+    "تثبيط CYP3A4 يمنع أيض الستاتين.",
+    "خطر انحلال الربيدات (آلام عضلات، بيلة ميوجلوبين، فشل كلوي).",
+    "أوقف الستاتين مؤقتاً أثناء الماكروليد أو استبدله بالأزيثرومايسين.",
+    "documented", "FDA", "rapid"],
+  ["clarithromycin", "ergotamine", "contraindicated",
+    "الجمع ممنوع قطعاً — تسمم إرغوتي.",
+    "تثبيط CYP3A4 يمنع تصفية قلويات الإرغوت.",
+    "تشنج وعائي ونقص تروية الأطراف والحواس.",
+    "لا يُوصف الكلاريثرومايسين مع قلويات الإرغوت إطلاقاً — استخدم مضاداً حيوياً من فئة أخرى.",
+    "documented", "FDA", "rapid"],
+  ["sertraline", "tramadol", "major",
+    "خطر متلازمة سيروتونينية عند الجمع.",
+    "تأثير سيروتونيني جمعي: تثبيط إعادة الامتصاص + تنشيط مسار مركزي.",
+    "هياج، رعشة، تعرق، ارتفاع حرارة، اضطراب نظم.",
+    "تجنّب الجمع؛ عند الضرورة راقب العلامات ووقف عند أول مؤشر.",
+    "documented", "Stockley", "rapid"],
+  ["sertraline", "ibuprofen", "moderate",
+    "نزف هضمي محتمل عند جمع SSRI مع NSAID.",
+    "نقص سيروتونين الصفيحات يضعف التجمع + إيذاء مخاطي جمعي.",
+    "نزف جهاز هضمي علوي.",
+    "راقب علامات النزف وفكّر بمثبط مضخة بروتون واقٍ مع الاستخدام المطول.",
+    "documented", "Stockley", "delayed"],
+  ["phenelzine", "sertraline", "contraindicated",
+    "الجمع بين مثبط MAO وSSRI ممنوع قطعاً.",
+    "تثبيط أكسيداز المونوامين مع تثبيط إعادة امتصاص السيروتونين.",
+    "أزمة سيروتونينية أو ارتفاع ضغط مهدك للحياة.",
+    "ممنوع الجمع؛ فاصل تنظيف 14 يوماً بعد إيقاف المثبط قبل أي SSRI.",
+    "documented", "Lexicomp", "rapid"],
+  ["isosorbide dinitrate", "sildenafil", "contraindicated",
+    "الجمع بين النترات ومثبطات PDE5 ممنوع قطعاً.",
+    "تضخم جمعي لمسار cGMP/أكسيد النيتريك في العضلات الملساء الوعائية.",
+    "هبوط ضغط انهياري قد يكون قاتلاً.",
+    "لا يُوصف السيلدينافيل مع أي نترات مهما كان شكلها أو الفاصل الزمني.",
+    "documented", "FDA", "rapid"],
+  ["digoxin", "amiodarone", "major",
+    "الأميودارون يرفع تركيز الديجوكسين.",
+    "تثبيط P-glycoprotein وCYP3A4.",
+    "سمّية ديجوكسين: اضطراب نظم، غثيان، اضطراب رؤية لونية.",
+    "خفّض جرعة الديجوكسين ~50% وراقب مستواه وبوتاسيوم الدم.",
+    "documented", "Stockley", "delayed"],
+  ["amlodipine", "simvastatin", "moderate",
+    "الأميلوديبين يرفع تعرض السيمفاستاتين.",
+    "تثبيط CYP3A4 معتدل.",
+    "خطر عضلي متزايد (ألم عضلات، ارتفاع CK).",
+    "لا يتجاوز السيمفاستاتين 20مغ/يوم مع الأميلوديبين.",
+    "documented", "FDA", "delayed"],
+  ["losartan", "ibuprofen", "moderate",
+    "NSAID يضعف خافض الضغط ويهدد الكلى.",
+    "تثبيط البروستاجلاندينات الكلوية Vasodilatory.",
+    "ارتفاع ضغط معاود + خطر حصيلة كلوية حادة.",
+    "تجنّب NSAID المزمن؛ راقب الضغط وكرياتينين الدم.",
+    "documented", "Stockley", "delayed"],
+  ["ciprofloxacin", "calcium", "moderate",
+    "الكالسيوم يقلل امتصاص السيبروفلوكساسين بشدة.",
+    "تكوين مركبات شيلاتية غير ذائبة في القناة الهضمية.",
+    "فشل علاجي للمضاد الحيوي.",
+    "يُعطى المضاد قبل ساعتين أو بعد 6 ساعات من مكملات الكالسيوم.",
+    "documented", "Stockley", "rapid"],
+  ["ciprofloxacin", "theophylline", "major",
+    "السيبروفلوكساسين يرفع تركيز الثيوفيلين.",
+    "تثبيط CYP1A2.",
+    "سمّية ثيوفيلين: تسارع نظم، تشنجات، هياج.",
+    "خفّض جرعة الثيوفيلين للنصف وراقب مستواه المصلي.",
+    "documented", "Stockley", "rapid"],
+  ["ciprofloxacin", "ondansetron", "moderate",
+    "إطالة QT جمعي محتمل.",
+    "تأثير جمعي على قنوات البوتاسيوم (فلوروكينولون + مضاد قيء 5HT3).",
+    "خطر اضطراب نظم Torsades de Pointes.",
+    "تجنّب الجمع عند عوامل الخطر: نقص بوتاسيوم، إطالة QT سابقة، بوتاسيوم/مغنيسيوم منخفض.",
+    "documented", "Lexicomp", "rapid"],
+  ["omeprazole", "clopidogrel", "moderate",
+    "الأوميبرازول يضعف تفعيل الكلوبيدوغريل.",
+    "تثبيط CYP2C19 — إنزيم التفعيل الإلزامي للدواء قبل السير.",
+    "ضعف الحماية الصفيحاتية وتهديد الأجل القلبي.",
+    "يفضَّل البانتوبرازول (تثبيط أقل) أو مضاد H2 كواقٍ معوي بديل.",
+    "documented", "FDA", "delayed"],
+  ["aspirin", "ibuprofen", "moderate",
+    "الإيبوبروفين يضعف الحماية القلبية للأسبرين.",
+    "منافسة على موقع تثبيط COX-1 داخل الصفيحة.",
+    "فقدان التأثير الصفيحاتي الوقائي للأسبرين.",
+    "تناول الأسبرين قبل ساعتين على الأقل من الإيبوبروفين.",
+    "documented", "FDA", "rapid"],
+  ["levothyroxine", "ferrous sulfate", "major",
+    "الحديد يمنع امتصاص الثيروكسين.",
+    "شيلات كيميائي غير ذائب في القناة الهضمية.",
+    "قصور درقي غير منضبط وارتفاع TSH.",
+    "فاصلاً 4 ساعات على الأقل بين الثيروكسين ومكمل الحديد.",
+    "documented", "Stockley", "delayed"],
+  ["levothyroxine", "calcium", "major",
+    "الكالسيوم يخفض امتصاص الثيروكسين.",
+    "تكوّن مركب غير ذائب مع الكالسيوم.",
+    "ضعف ضبط الدرق وارتفاع TSH.",
+    "فاصلاً 4 ساعات بين الثيروكسين ومكمل الكالسيوم.",
+    "documented", "Lexicomp", "delayed"],
+  ["gliclazide", "fluconazole", "major",
+    "الفلوكونازول يضخّم خافض السكر.",
+    "تثبيط CYP2C9 يبطئ أيض الجليكلازيد.",
+    "نقص سكر شديد (تعرق، رجفة، فقد وعي).",
+    "راقب سكر الدم عن قرب واضبط جرعة السلفونيل يوريا أثناء الفلوكونازول.",
+    "documented", "Lexicomp", "rapid"],
+  ["lithium", "ibuprofen", "major",
+    "NSAID يرفع تركيز الليثيوم.",
+    "تثبيط البروستاجلاندينات يقلل الترشيح الكلوي للليثيوم.",
+    "سمّية ليثيوم: رعشة، تقيؤ، تخليط، تشنجات.",
+    "تجنّب NSAID — البديل الباراسيتامول؛ راقب مستوى الليثيوم عند الضرورة.",
+    "documented", "Stockley", "delayed"],
+  ["allopurinol", "azathioprine", "contraindicated",
+    "الألوبورينول يضخّم سمّية الآزاثيوبرين بشدة.",
+    "تثبيط زانثين أوكسيديز يمنع أيض الآزاثيوبرين غير الفعّال.",
+    "قهم نقي شديد (نقص كريات مهدك للحياة).",
+    "ممنوع الجمع إلا بخفض جرعة الآزاثيوبرين إلى 25–33% تحت إشراف تخصصي ومراقبة تعداد دم.",
+    "documented", "Stockley", "delayed"],
+  ["carbamazepine", "ethinylestradiol", "major",
+    "الكاربامازيبين يُفشل مانع الحمل الهرموني.",
+    "استحثاث CYP3A4 يسرّع أيض الإستروجين.",
+    "حمل غير مخطط.",
+    "اعتمد وسيلة حاجزة أو رفع جرعة الإستروجين بإشراف طبي.",
+    "documented", "Stockley", "delayed"],
 ];
 
 const PATIENTS: [string, string, string, string, string][] = [
@@ -104,9 +292,15 @@ async function main() {
   // 3) الأدوية
   const meds: { id: string; barcode: string; name: string; genericName: string; quantity: number }[] = [];
   for (const [name, generic, cat, bc, buy, sell, qty, min, exp, dose, rx, maker] of MEDICINES) {
+    const atc = ATC_INFO[generic];
     const med = await db.medicine.upsert({
       where: { barcode: bc },
-      update: {},
+      update: {
+        // مزامنة الحقول السريرية للأدوية الموجودة مسبقاً
+        atcCode: atc?.atcCode ?? undefined,
+        atcClass: atc?.atcClass ?? undefined,
+        maxDailyDose: atc?.maxDailyDose ?? undefined,
+      },
       create: {
         name,
         genericName: generic,
@@ -121,24 +315,63 @@ async function main() {
         dosage: dose,
         requiresPrescription: rx,
         manufacturer: maker,
+        atcCode: atc?.atcCode,
+        atcClass: atc?.atcClass,
+        maxDailyDose: atc?.maxDailyDose,
       },
     });
     meds.push({ id: med.id, barcode: bc, name, genericName: med.genericName, quantity: med.quantity });
   }
-  console.log(`✓ ${meds.length} أدوية`);
+  console.log(`✓ ${meds.length} أدوية (بتصنيف ATC)`);
 
-  // 4) التداخلات
-  for (const [a, b, sev, desc, mgmt] of INTERACTIONS) {
-    const exists = await db.drugInteraction.findUnique({
-      where: { genericA_genericB: { genericA: a, genericB: b } },
+  // 3-b) دفعات (LOT) ابتدائية — تضمن عمل صرف FEFO على أي قاعدة بيانات جديدة
+  const needBatches = await db.medicine.findMany({
+    where: { quantity: { gt: 0 }, batches: { none: {} } },
+    select: { id: true, quantity: true, expiryDate: true, purchasePrice: true },
+  });
+  for (const m of needBatches) {
+    await db.batch.create({
+      data: {
+        medicineId: m.id,
+        lotNumber: "INIT",
+        expiryDate: m.expiryDate,
+        quantity: m.quantity,
+        unitCost: m.purchasePrice,
+        supplier: "رصيد افتتاحي",
+      },
     });
-    if (!exists) {
-      await db.drugInteraction.create({
-        data: { genericA: a, genericB: b, severity: sev, description: desc, management: mgmt },
-      });
-    }
   }
-  console.log(`✓ ${INTERACTIONS.length} تداخلات دوائية`);
+  if (needBatches.length) console.log(`✓ ${needBatches.length} دفعة ابتدائية (LOT)`);
+
+  // 4) التداخلات السريرية — upsert كامل حتى تُحدّث السجلات القديمة بالحقول العلمية
+  for (const [a, b, sev, desc, mech, effect, mgmt, evidence, source, onset] of INTERACTIONS) {
+    await db.drugInteraction.upsert({
+      where: { genericA_genericB: { genericA: a, genericB: b } },
+      update: {
+        severity: sev,
+        description: desc,
+        mechanism: mech,
+        clinicalEffect: effect,
+        management: mgmt,
+        evidenceLevel: evidence,
+        source,
+        onset,
+      },
+      create: {
+        genericA: a,
+        genericB: b,
+        severity: sev,
+        description: desc,
+        mechanism: mech,
+        clinicalEffect: effect,
+        management: mgmt,
+        evidenceLevel: evidence,
+        source,
+        onset,
+      },
+    });
+  }
+  console.log(`✓ ${INTERACTIONS.length} تداخل دوائي موثق سريرياً`);
 
   // 5) المرضى
   for (const [name, nid, phone, chronic, allergy] of PATIENTS) {

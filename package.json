@@ -1,6 +1,6 @@
 {
   "name": "ruba-pharmacy-platform",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
@@ -12,7 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "bun tests/e2e/live.e2e.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

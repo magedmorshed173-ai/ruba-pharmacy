@@ -1,14 +1,20 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { fail, ok, requireAuth } from "@/lib/api-guard";
+import { reviewCartClinical } from "@/lib/clinical-review";
 
 interface CheckItem {
   barcodes?: string[];
   medicineIds?: string[];
-  patientGenericNames?: string[];
+  patientId?: string;
 }
 
-// POST /api/interactions/check — فحص تداخلات (سلة ↔ سلة) و(سلة ↔ أدوية المريض)
+/**
+ * POST /api/interactions/check — الفحص السريري الشامل للسلة
+ * 1) تداخلات سلة↔سلة وسلة↔أدوية المريض المزمنة (بآلية وإدارة ومصدر علمي)
+ * 2) تعارضات حساسية المريض مع عائلات الدواء
+ * 3) العلاج المكرر داخل السلة (نفس الفئة العلاجية ATC)
+ */
 export async function POST(request: NextRequest) {
   const { error } = await requireAuth();
   if (error) return error;
@@ -17,9 +23,19 @@ export async function POST(request: NextRequest) {
     const body: CheckItem = await request.json();
     const barcodes: string[] = Array.isArray(body.barcodes) ? body.barcodes : [];
     const medicineIds: string[] = Array.isArray(body.medicineIds) ? body.medicineIds : [];
-    const patientGenerics: string[] = Array.isArray(body.patientGenericNames)
-      ? body.patientGenericNames.map((g) => g.toLowerCase().trim()).filter(Boolean)
-      : [];
+    const patientId = String(body.patientId ?? "").trim();
+
+    if (barcodes.length === 0 && medicineIds.length === 0) {
+      return ok({
+        interactions: [],
+        allergyAlerts: [],
+        duplicateTherapies: [],
+        highestSeverity: null,
+        blocking: false,
+        checkedGenerics: [],
+        patient: null,
+      });
+    }
 
     const meds = await db.medicine.findMany({
       where: {
@@ -28,66 +44,12 @@ export async function POST(request: NextRequest) {
           ...(medicineIds.length ? [{ id: { in: medicineIds } }] : []),
         ],
       },
-      select: { name: true, genericName: true },
+      select: { id: true, name: true, genericName: true, atcClass: true },
     });
 
-    const cartGenerics = Array.from(
-      new Set(meds.map((m) => m.genericName.toLowerCase()).filter(Boolean))
-    );
-
-    if (cartGenerics.length === 0) {
-      return ok({ interactions: [], checkedGenerics: [] });
-    }
-
-    // 1) تداخلات داخل السلة
-    const cartHits = await db.drugInteraction.findMany({
-      where: {
-        isActive: true,
-        genericA: { in: cartGenerics },
-        genericB: { in: cartGenerics },
-      },
-    });
-
-    // 2) تداخلات السلة مع الأدوية المزمنة للمريض
-    let patientHits: typeof cartHits = [];
-    if (patientGenerics.length > 0) {
-      patientHits = await db.drugInteraction.findMany({
-        where: {
-          isActive: true,
-          AND: [
-            {
-              OR: [
-                { genericA: { in: cartGenerics } },
-                { genericB: { in: cartGenerics } },
-              ],
-            },
-            {
-              OR: [
-                { genericA: { in: patientGenerics } },
-                { genericB: { in: patientGenerics } },
-              ],
-            },
-          ],
-        },
-      });
-    }
-
-    const mapHit = (h: (typeof cartHits)[number]) => ({
-      genericA: h.genericA,
-      genericB: h.genericB,
-      severity: h.severity,
-      description: h.description,
-      management: h.management,
-    });
-
-    return ok({
-      interactions: [
-        ...cartHits.filter((h) => h.genericA !== h.genericB).map(mapHit),
-        ...patientHits.map(mapHit),
-      ],
-      checkedGenerics: [...cartGenerics, ...patientGenerics],
-    });
+    const review = await reviewCartClinical(meds, patientId || undefined);
+    return ok(review);
   } catch {
-    return fail("تعذر فحص التداخلات", 500);
+    return fail("تعذر تنفيذ الفحص السريري", 500);
   }
 }

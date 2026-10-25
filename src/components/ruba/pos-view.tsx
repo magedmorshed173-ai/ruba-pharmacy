@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, fmtMoney } from "@/lib/api-client";
-import type { AuthUser, Medicine, InteractionHit } from "@/lib/types";
+import type {
+  AuthUser,
+  Medicine,
+  InteractionHit,
+  ClinicalReview,
+  Patient,
+} from "@/lib/types";
 import { StockBadge, ExpiryBadge } from "./shared";
 import { BarcodeScanner } from "./barcode-scanner";
 import { Button } from "@/components/ui/button";
@@ -41,6 +47,8 @@ import {
   TriangleAlert,
   PillBottle,
   Printer,
+  ShieldAlert,
+  UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -75,7 +83,34 @@ interface CheckoutResult {
   netAmount: number;
   duplicated?: boolean;
   interactionWarnings?: InteractionHit[];
+  clinicalReview?: ClinicalReview;
+  clinicalOverride?: boolean;
   sale?: SaleFull;
+}
+
+/** أنماط شارات الشدة السريرية */
+const SEV_STYLE: Record<string, string> = {
+  contraindicated:
+    "border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-400",
+  major:
+    "border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400",
+  moderate:
+    "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-400",
+  minor:
+    "border-slate-300 bg-slate-50 text-slate-600 dark:border-slate-500/40 dark:bg-slate-500/10 dark:text-slate-400",
+};
+
+const SEV_TEXT: Record<string, string> = {
+  contraindicated: "ممنوع سريرياً",
+  major: "خطير",
+  moderate: "متوسط",
+  minor: "بسيط",
+};
+
+function hasFindings(r: ClinicalReview): boolean {
+  return (
+    r.interactions.length > 0 || r.allergyAlerts.length > 0 || r.duplicateTherapies.length > 0
+  );
 }
 
 export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void }) {
@@ -87,7 +122,10 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [checking, setChecking] = useState(false);
-  const [warnings, setWarnings] = useState<InteractionHit[]>([]);
+  const [review, setReview] = useState<ClinicalReview | null>(null);
+  const [blocked, setBlocked] = useState<ClinicalReview | null>(null);
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [patientId, setPatientId] = useState("none");
   const [result, setResult] = useState<CheckoutResult | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -150,22 +188,31 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
 
   async function checkInteractions() {
     try {
-      const r = await api<{ interactions: InteractionHit[] }>("/api/interactions/check", {
+      const r = await api<ClinicalReview>("/api/interactions/check", {
         method: "POST",
-        json: { medicineIds: cart.map((l) => l.medicine.id) },
+        json: {
+          medicineIds: cart.map((l) => l.medicine.id),
+          patientId: patientId !== "none" ? patientId : undefined,
+        },
       });
-      setWarnings(r.interactions);
+      setReview(r);
     } catch {
-      /* الفحص تحذيري فقط */
+      /* الفحص تحذيري — لا يعطل السلة */
     }
   }
 
   useEffect(() => {
-    if (cart.length >= 2) checkInteractions();
-    else setWarnings([]);
-  }, [cart.map((l) => l.medicine.id).join(",")]);
+    api<{ patients?: Patient[]; results?: Patient[] }>("/api/patients")
+      .then((r) => setPatients(r.patients ?? r.results ?? []))
+      .catch(() => {});
+  }, []);
 
-  async function checkout() {
+  useEffect(() => {
+    if (cart.length >= 1) checkInteractions();
+    else setReview(null);
+  }, [cart.map((l) => l.medicine.id).join(","), patientId]);
+
+  async function checkout(clinicalOverride = false) {
     if (cart.length === 0) {
       toast.error("السلة فارغة");
       return;
@@ -185,6 +232,8 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
           customerName: customerName.trim() || "عميل نقدي",
           customerPhone: customerPhone.trim(),
           transactionId: `POS-${Date.now()}-${user.username}`,
+          patientId: patientId !== "none" ? patientId : undefined,
+          ...(clinicalOverride ? { clinicalOverride: true } : {}),
         },
       });
       setResult(r);
@@ -192,12 +241,24 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
       setDiscountSar("");
       setCustomerName("");
       setCustomerPhone("");
-      setWarnings([]);
+      setReview(null);
+      setBlocked(null);
       toast.success(r.duplicated ? "عملية مكررة — تم استرجاع الفاتورة الأصلية" : "تم البيع بنجاح");
       loadMeds(q);
       onDone?.();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "فشل إتمام البيع");
+      const err = e as Error & {
+        status?: number;
+        payload?: { clinicalBlock?: boolean; clinicalReview?: ClinicalReview };
+      };
+      if (err.payload?.clinicalBlock) {
+        setBlocked(err.payload.clinicalReview ?? null);
+        if (err.status === 403)
+          toast.error("حجب سريري — إتمام هذه العملية يتطلب صيدلياً");
+        else toast.error("تعارض سريري خطر — يتطلب تأكيد التجاوز المسؤول");
+      } else {
+        toast.error(e instanceof Error ? e.message : "فشل إتمام البيع");
+      }
     } finally {
       setChecking(false);
     }
@@ -315,24 +376,103 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
           )}
         </div>
 
-        {/* تحذيرات التداخلات */}
-        {warnings.length > 0 && (
-          <div className="mx-3 mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
-            <p className="flex items-center gap-1.5 text-xs font-bold text-amber-700 dark:text-amber-400">
-              <TriangleAlert className="size-4" />
-              تداخلات دوائية محتملة ({warnings.length})
-            </p>
-            <ul className="mt-1.5 space-y-1">
-              {warnings.map((w, i) => (
-                <li key={i} className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
-                  <span className="font-bold">
+        {/* اللوحة السريرية — تداخلات + حساسية + علاج مكرر */}
+        {review && hasFindings(review) && (
+          <div className="mx-3 mt-3 space-y-2">
+            {review.allergyAlerts.length > 0 && (
+              <div className="rounded-lg border border-rose-300 bg-rose-50 p-3 dark:border-rose-500/40 dark:bg-rose-500/10">
+                <p className="flex items-center gap-1.5 text-xs font-bold text-rose-700 dark:text-rose-400">
+                  <ShieldAlert className="size-4" />
+                  تعارض حساسية ({review.allergyAlerts.length}) — حاجب
+                </p>
+                <ul className="mt-1.5 space-y-1.5">
+                  {review.allergyAlerts.map((a, i) => (
+                    <li key={i} className="text-[11px] leading-relaxed text-rose-800 dark:text-rose-300">
+                      <span className="font-bold">{a.medicine}</span> — حساسية المريض: «{a.allergy}» ({a.familyAr})
+                      <span className="block opacity-80">{a.note}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {review.interactions
+              .slice()
+              .sort((x, y) => (x.severity === "contraindicated" ? -1 : y.severity === "contraindicated" ? 1 : 0))
+              .map((w, i) => (
+                <div
+                  key={i}
+                  className={`rounded-lg border p-3 ${SEV_STYLE[w.severity]}`}
+                >
+                  <p className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+                    <TriangleAlert className="size-4" />
                     {w.genericA} + {w.genericB}
-                  </span>{" "}
-                  ({w.severity === "major" ? "خطير" : w.severity === "moderate" ? "متوسط" : "بسيط"}):{" "}
-                  {w.description}
-                </li>
+                    <span className="rounded-full border border-current px-2 py-0.5 text-[10px]">
+                      {SEV_TEXT[w.severity]}
+                    </span>
+                    {w.context === "patient" && (
+                      <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px]">
+                        دواء مزمن للمريض
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed">{w.description}</p>
+                  {w.mechanism && (
+                    <p className="mt-1 text-[11px] leading-relaxed opacity-90">
+                      <span className="font-bold">الآلية:</span> {w.mechanism}
+                    </p>
+                  )}
+                  {w.clinicalEffect && (
+                    <p className="text-[11px] leading-relaxed opacity-90">
+                      <span className="font-bold">الأثر المحتمل:</span> {w.clinicalEffect}
+                    </p>
+                  )}
+                  {w.management && (
+                    <p className="mt-1 rounded bg-black/5 p-1.5 text-[11px] leading-relaxed dark:bg-white/5">
+                      <span className="font-bold">الإدارة:</span> {w.management}
+                    </p>
+                  )}
+                  {(w.evidenceLevel || w.source) && (
+                    <p className="num mt-1 text-[10px] opacity-70" dir="auto">
+                      {w.evidenceLevel === "documented" ? "موثق سريرياً" : w.evidenceLevel === "probable" ? "مرجّح" : w.evidenceLevel === "theoretical" ? "نظري" : ""}
+                      {w.source ? ` — المصدر: ${w.source}` : ""}
+                      {w.onset === "rapid" ? " — بدء فوري" : w.onset === "delayed" ? " — بدء متأخر" : ""}
+                    </p>
+                  )}
+                </div>
               ))}
-            </ul>
+
+            {review.duplicateTherapies.map((d, i) => (
+              <div
+                key={i}
+                className="rounded-lg border border-sky-300 bg-sky-50 p-3 dark:border-sky-500/40 dark:bg-sky-500/10"
+              >
+                <p className="text-xs font-bold text-sky-700 dark:text-sky-400">
+                  علاج مكرر — نفس الفئة العلاجية
+                </p>
+                <p className="mt-1 text-[11px] leading-relaxed text-sky-800 dark:text-sky-300">
+                  {d.names.join(" + ")} — روجعت الفائدة العلاجية من الجمع؟
+                  <span className="num block opacity-75">{d.atcClass}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* بوابة الحجب السريري */}
+        {blocked && (
+          <div className="mx-3 mt-3 rounded-lg border-2 border-rose-400 bg-rose-50 p-3 dark:border-rose-500/50 dark:bg-rose-500/10">
+            <p className="flex items-center gap-1.5 text-xs font-bold text-rose-700 dark:text-rose-400">
+              <ShieldAlert className="size-4" />
+              البيع محجوب — {blocked.interactions.some((i) => i.severity === "contraindicated")
+                ? "ممنوع سريرياً"
+                : "تعارض حساسية"}
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-rose-800 dark:text-rose-300">
+              {user.role === "technician"
+                ? "إتمام هذه العملية يتطلب حضور صيدلي — أدرجها للحجز وانتظر المراجعة."
+                : "بصفتك صيدلياً يمكنك التجاوز المسؤول — يُسجل في الفاتورة للتدقيق."}
+            </p>
           </div>
         )}
 
@@ -397,6 +537,26 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
 
         {/* الملخص والدفع */}
         <div className="space-y-3 border-t p-4">
+          <div>
+            <Label className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+              <UserRound className="size-3.5" />
+              مريض مسجل — يفعّل فحص الحساسية والأدوية المزمنة
+            </Label>
+            <Select value={patientId} onValueChange={setPatientId}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="عميل نقدي — بلا ملف" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">عميل نقدي — بلا ملف</SelectItem>
+                {patients.map((pt) => (
+                  <SelectItem key={pt.id} value={pt.id}>
+                    {pt.name}
+                    {pt.allergies ? ` — حساسية: ${pt.allergies}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <Input
               placeholder="اسم العميل (اختياري)"
@@ -470,11 +630,21 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
           </div>
 
           <Button
-            onClick={checkout}
-            disabled={checking || cart.length === 0}
-            className="h-11 w-full bg-teal-600 text-base font-bold hover:bg-teal-700"
+            onClick={() => checkout(!!blocked)}
+            disabled={checking || cart.length === 0 || (!!blocked && user.role === "technician")}
+            className={
+              blocked && user.role !== "technician"
+                ? "h-11 w-full bg-rose-600 text-base font-bold hover:bg-rose-700"
+                : "h-11 w-full bg-teal-600 text-base font-bold hover:bg-teal-700"
+            }
           >
-            {checking ? <Loader2 className="size-5 animate-spin" /> : `إتمام البيع · ${fmtMoney(totals.net)} ر.س`}
+            {checking ? (
+              <Loader2 className="size-5 animate-spin" />
+            ) : blocked && user.role !== "technician" ? (
+              `تجاوز سريري مسؤول وإتمام البيع · ${fmtMoney(totals.net)} ر.س`
+            ) : (
+              `إتمام البيع · ${fmtMoney(totals.net)} ر.س`
+            )}
           </Button>
         </div>
       </div>
@@ -508,6 +678,11 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
               {(result.interactionWarnings?.length ?? 0) > 0 && (
                 <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
                   ⚠ رُصدت {result.interactionWarnings!.length} تداخلات دوائية في هذه الفاتورة — راجع سجلها في الإشعارات
+                </p>
+              )}
+              {result.clinicalOverride && (
+                <p className="rounded-lg bg-rose-50 p-2 text-xs font-bold text-rose-700 dark:bg-rose-500/10 dark:text-rose-400">
+                  🛡 أُتممت بتجاوز سريري مسؤول — مسجلة في الفاتورة للتدقيق
                 </p>
               )}
 

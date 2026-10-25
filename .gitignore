@@ -64,3 +64,6 @@ Caddyfile
 /local-*
 /scripts/shot-*.png
 /skills/
+.tmp-e2e/
+.ks-pass-tmp
+db/*.db-*

@@ -4,6 +4,10 @@ import { db } from "@/lib/db";
 import { fail, ok, requireAuth } from "@/lib/api-guard";
 import { toInt } from "@/lib/money";
 import { allocateFefo } from "@/lib/fefo";
+import {
+  reviewCartClinical,
+  type ClinicalReview,
+} from "@/lib/clinical-review";
 
 interface CheckoutItem {
   barcode?: string;
@@ -16,7 +20,11 @@ interface CheckoutItem {
  * الإصلاحات مقابل v2.0:
  *  - معاملة ذرّية واحدة (بيع + بنود + خصم مخزون + حركات تدقيق)
  *  - Idempotency عبر reference فريد (محمي بقيود قاعدة البيانات)
- *  - فحص صلاحية + وفرة + تداخلات دوائية داخل السلة
+ *  - فحص صلاحية + وفرة + صرف FEFO
+ * الإضافات السريرية v3.5:
+ *  - بوابة سلامة دوائية: «ممنوع سريرياً» وتعارض الحساسية يحجبان البيع
+ *    (الفني محجوب دائماً؛ الصيدلي/المدير يتجاوز بـ clinicalOverride المسؤول)
+ *  - مراجعة سريرية كاملة في الاستجابة: تداخلات + حساسية + علاج مكرر
  */
 export async function POST(request: NextRequest) {
   const { user, error } = await requireAuth();
@@ -30,6 +38,8 @@ export async function POST(request: NextRequest) {
     const reference =
       String(body.transactionId ?? "").trim() ||
       `POS-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const patientId = String(body.patientId ?? "").trim() || null;
+    const clinicalOverride = body.clinicalOverride === true;
 
     // Idempotency: إن كانت العملية مسجلة مسبقاً أعدها دون تكرار
     const existing = await db.sale.findUnique({
@@ -46,8 +56,31 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // تداخلات دوائية داخل السلة (تحذير غير معطِّل)
-    const interactionWarnings = await checkCartInteractions(items);
+    // ── المراجعة السريرية الشاملة (تحذير + بوابة حجب) ──
+    const reviewKeys = items.map((i) =>
+      i.barcode ? { barcode: String(i.barcode).trim() } : { id: String(i.medicineId) }
+    );
+    const reviewMeds = await db.medicine.findMany({
+      where: { OR: reviewKeys, isActive: true },
+      select: { id: true, name: true, genericName: true, atcClass: true },
+    });
+    const clinicalReview = await reviewCartClinical(reviewMeds, patientId ?? undefined);
+    if (clinicalReview.blocking) {
+      if (user.role === "technician") {
+        return fail(
+          "يوجد ممنوع سريرياً أو تعارض حساسية في السلة — يجب مراجعة صيدلي قبل الإتمام",
+          403,
+          { clinicalBlock: true, clinicalReview }
+        );
+      }
+      if (!clinicalOverride) {
+        return fail(
+          "تعارض سريري خطر — يتطلب تأكيد تجاوز مسؤول من الصيدلي",
+          409,
+          { clinicalBlock: true, clinicalReview }
+        );
+      }
+    }
 
     const discount = Math.max(0, toInt(body.discount ?? 0)); // هللات
     const customerName = String(body.customerName ?? "").trim() || "عميل نقدي";
@@ -151,6 +184,9 @@ export async function POST(request: NextRequest) {
               paymentMethod,
               reference,
               userId: user.id,
+              patientId: clinicalReview.patient?.id ?? null,
+              patientName: clinicalReview.patient?.name ?? null,
+              clinicalOverride: clinicalReview.blocking && clinicalOverride,
               items: {
                 create: prepared.map((p) => ({
                   medicineId: p.medicineId,
@@ -222,7 +258,8 @@ export async function POST(request: NextRequest) {
           saleId: sale.id,
           reference: sale.reference,
           netAmount: sale.netAmount,
-          interactionWarnings,
+          interactionWarnings: clinicalReview.interactions,
+          clinicalReview,
           message: "تم البيع بنجاح",
           sale: full,
         },
@@ -278,35 +315,4 @@ export async function GET(request: NextRequest) {
   } catch {
     return fail("تعذر جلب المبيعات", 500);
   }
-}
-
-/** فحص التداخلات الدوائية بين بنود السلة */
-async function checkCartInteractions(items: CheckoutItem[]) {
-  const keys = items.map((i) =>
-    i.barcode ? { barcode: String(i.barcode).trim() } : { id: String(i.medicineId) }
-  );
-  if (keys.length < 2) return [];
-  const meds = await db.medicine.findMany({
-    where: { OR: keys, isActive: true },
-    select: { genericName: true, name: true },
-  });
-  const generics = Array.from(
-    new Set(meds.map((m) => m.genericName.toLowerCase()).filter(Boolean))
-  );
-  if (generics.length < 2) return [];
-
-  const hits = await db.drugInteraction.findMany({
-    where: { isActive: true, genericA: { in: generics }, genericB: { in: generics } },
-  });
-
-  // تجاهل التداخل الذاتي (نفس المادة)
-  return hits
-    .filter((h) => h.genericA.toLowerCase() !== h.genericB.toLowerCase())
-    .map((h) => ({
-      genericA: h.genericA,
-      genericB: h.genericB,
-      severity: h.severity,
-      description: h.description,
-      management: h.management,
-    }));
 }

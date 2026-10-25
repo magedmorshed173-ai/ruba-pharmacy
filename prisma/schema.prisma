@@ -32,31 +32,34 @@ model User {
 // ───────────────────────────── المخزون ─────────────────────────────
 
 model Category {
-  id          String  @id @default(cuid())
-  name        String  @unique
+  id          String     @id @default(cuid())
+  name        String     @unique
   description String?
   medicines   Medicine[]
 }
 
 model Medicine {
-  id                   String   @id @default(cuid())
+  id                   String    @id @default(cuid())
   name                 String
   genericName          String // الاسم العلمي — أساس فحص التداخلات
   categoryId           String
-  category             Category @relation(fields: [categoryId], references: [id])
+  category             Category  @relation(fields: [categoryId], references: [id])
   manufacturer         String?
-  barcode              String   @unique
-  purchasePrice        Int      @default(0) // هللات
+  barcode              String    @unique
+  purchasePrice        Int       @default(0) // هللات
   sellingPrice         Int // هللات
-  quantity             Int      @default(0) // وحدات (مجمّع ذاكرة = مجموع الدفعات)
-  minQuantity          Int      @default(0) // حد التنبيه
+  quantity             Int       @default(0) // وحدات (مجمّع ذاكرة = مجموع الدفعات)
+  minQuantity          Int       @default(0) // حد التنبيه
   expiryDate           DateTime // أقرب صلاحية معروفة (تُحدَّث مع الدفعات)
   productionDate       DateTime?
   dosage               String? // الجرعة (مثل 500mg)
-  requiresPrescription Boolean  @default(false)
-  isActive             Boolean  @default(true)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  requiresPrescription Boolean   @default(false)
+  isActive             Boolean   @default(true)
+  atcCode              String? // تصنيف ATC العالمي (مثل B01AC06) — أساس كشف العلاج المكرر
+  atcClass             String? // الفئة العلاجية الوظيفية (مثل مضادات التهاب غير ستيرويدية)
+  maxDailyDose         Int? // الحد الأقصى للوحدات/يوم — أساس فحص الجرعة
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   saleItems SaleItem[]
   movements StockMovement[]
@@ -66,6 +69,8 @@ model Medicine {
   @@index([genericName, dosage])
   @@index([expiryDate])
   @@index([name])
+  @@index([categoryId])
+  @@index([atcClass])
 }
 
 // دفعات (LOT) — المعيار العالمي في الصيدليات (Odoo/ERPNext):
@@ -88,14 +93,21 @@ model Batch {
   @@index([expiryDate])
 }
 
+// سجل سريري كامل بعد نمط قواعد Lexicomp/Stockley:
+// الشدة + الآلية الدوائية + الأثر السريري + خطة الإدارة + مستوى الأدلة + المصدر العلمي
 model DrugInteraction {
-  id          String  @id @default(cuid())
-  genericA    String
-  genericB    String
-  severity    String // major | moderate | minor
-  description String
-  management  String?
-  isActive    Boolean @default(true)
+  id             String  @id @default(cuid())
+  genericA       String
+  genericB       String
+  severity       String // contraindicated | major | moderate | minor
+  mechanism      String? // آلية التداخل (مثل: تثبيط CYP2C9، تأثير جمعي على النزف)
+  clinicalEffect String? // الأثر السريري المحتمل (مثل: خطر نزف هضمي، ارتفاع INR)
+  description    String
+  management     String? // خطة الإدارة السريرية الموصى بها
+  evidenceLevel  String? // documented | probable | theoretical
+  source         String? // المرجع العلمي (مثل: Stockley, Lexicomp, FDA)
+  onset          String? // rapid | delayed
+  isActive       Boolean @default(true)
 
   @@unique([genericA, genericB])
   @@index([genericA])
@@ -114,7 +126,7 @@ model StockMovement {
   user         User?    @relation(fields: [userId], references: [id])
   createdAt    DateTime @default(now())
 
-  @@index([medicineId])
+  @@index([medicineId, createdAt])
   @@index([createdAt])
 }
 
@@ -157,41 +169,46 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderItem {
-  id         String        @id @default(cuid())
-  poId       String
-  po         PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
-  medicineId String
-  medicine   Medicine      @relation(fields: [medicineId], references: [id])
-  quantity   Int
-  unitCost   Int           // هللات
-  lotNumber  String?
-  expiryDate DateTime?
-  receivedQty Int          @default(0)
+  id          String        @id @default(cuid())
+  poId        String
+  po          PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  medicineId  String
+  medicine    Medicine      @relation(fields: [medicineId], references: [id])
+  quantity    Int
+  unitCost    Int // هللات
+  lotNumber   String?
+  expiryDate  DateTime?
+  receivedQty Int           @default(0)
 
   @@index([poId])
+  @@index([medicineId])
 }
 
 // ───────────────────────────── المبيعات ─────────────────────────────
 
 model Sale {
-  id            String   @id @default(cuid())
-  customerName  String   @default("عميل نقدي")
-  customerPhone String?
-  itemsCount    Int
-  totalAmount   Int // هللات
-  discount      Int      @default(0) // هللات
-  netAmount     Int // هللات
-  paymentMethod String   @default("cash") // cash | card | insurance
-  status        String   @default("completed") // completed | void
-  reference     String   @unique // Idempotency — معرّف العملية الفريد
-  userId        String
-  user          User     @relation(fields: [userId], references: [id])
-  saleDate      DateTime @default(now())
+  id               String   @id @default(cuid())
+  customerName     String   @default("عميل نقدي")
+  customerPhone    String?
+  itemsCount       Int
+  totalAmount      Int // هللات
+  discount         Int      @default(0) // هللات
+  netAmount        Int // هللات
+  paymentMethod    String   @default("cash") // cash | card | insurance
+  status           String   @default("completed") // completed | void
+  reference        String   @unique // Idempotency — معرّف العملية الفريد
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+  patientId        String? // المريض المرتبط — أساس فحص الحساسية والأمراض المزمنة
+  patientName      String? // لقطة اسم المريض وقت البيع
+  clinicalOverride Boolean  @default(false) // هل تم تجاوز سريري مسؤول؟ (يُراجع في التدقيق)
+  saleDate         DateTime @default(now())
 
   items SaleItem[]
 
   @@index([saleDate])
   @@index([userId])
+  @@index([status])
 }
 
 model SaleItem {
@@ -204,7 +221,7 @@ model SaleItem {
   quantity     Int
   unitPrice    Int // هللات
   subtotal     Int // هللات
-  costHalalas  Int @default(0) // لقطة تكلفة الدفعات (FEFO) وقت البيع — أساس تقارير الأرباح
+  costHalalas  Int      @default(0) // لقطة تكلفة الدفعات (FEFO) وقت البيع — أساس تقارير الأرباح
 
   @@index([saleId])
   @@index([medicineId])

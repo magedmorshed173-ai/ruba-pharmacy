@@ -96,9 +96,39 @@ export interface AppNotification {
 export interface InteractionHit {
   genericA: string;
   genericB: string;
-  severity: "major" | "moderate" | "minor";
+  severity: "contraindicated" | "major" | "moderate" | "minor";
   description: string;
+  mechanism?: string | null;
+  clinicalEffect?: string | null;
   management?: string | null;
+  evidenceLevel?: string | null;
+  source?: string | null;
+  onset?: string | null;
+  /** داخل السلة أم مع أدوية المريض المزمنة */
+  context?: "cart" | "patient";
+}
+
+export interface AllergyHit {
+  allergy: string;
+  familyAr: string;
+  medicine: string;
+  note: string;
+}
+
+export interface DuplicateGroup {
+  atcClass: string;
+  names: string[];
+}
+
+/** نتيجة الفحص السريري الشامل للسلة */
+export interface ClinicalReview {
+  interactions: InteractionHit[];
+  allergyAlerts: AllergyHit[];
+  duplicateTherapies: DuplicateGroup[];
+  highestSeverity: InteractionHit["severity"] | null;
+  blocking: boolean;
+  checkedGenerics: string[];
+  patient: { id: string; name: string; allergies: string | null } | null;
 }
 
 export interface DashboardStats {
