@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ربي فارمسي — نظام إدارة الصيدليات العربي المتكامل</title>
+<meta name="description" content="منصة مفتوحة المصدر لإدارة الصيدلية: نقطة بيع ذكية، مخزون بدفعات FEFO، موردون وأوامر شراء، فاحص تداخلات دوائية حي، تقارير ربحية فعلية — بواجهة عربية RTL أنيقة.">
+<meta property="og:title" content="ربي فارمسي — نظام إدارة الصيدليات العربي المتكامل">
+<meta property="og:description" content="نقطة بيع ذكية، مخزون FEFO، تداخلات دوائية حية، تقارير ربحية — مفتوح المصدر وPWA جاهز لأندرويد.">
+<meta property="og:image" content="https://raw.githubusercontent.com/magedmorshed173-ai/ruba-pharmacy/main/docs/screenshots/dashboard.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --teal:#0d9488; --teal-d:#0f766e; --teal-l:#14b8a6; --teal-bg:#f0fdfa;
+  --ink:#0f172a; --mut:#475569; --soft:#64748b; --line:#e2e8f0;
+  --amber:#f59e0b; --bg:#f8fafc; --card:#ffffff;
+  --rad:16px; --shadow:0 10px 30px -12px rgba(15,118,110,.18);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:'Tajawal',system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+img{max-width:100%;display:block}
+.wrap{max-width:1160px;margin:0 auto;padding:0 24px}
+/* ── Nav ── */
+nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.85);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.nav-in{display:flex;align-items:center;gap:28px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:900;font-size:19px}
+.brand .logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--teal-d),var(--teal-l));color:#fff;display:grid;place-items:center;font-size:20px;box-shadow:var(--shadow)}
+.nav-links{display:flex;gap:22px;margin-inline-start:auto;font-weight:500;font-size:14.5px;color:var(--mut)}
+.nav-links a:hover{color:var(--teal)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:12px;font-weight:700;font-size:14.5px;transition:.2s;cursor:pointer;border:none}
+.btn-teal{background:linear-gradient(135deg,var(--teal-d),var(--teal-l));color:#fff;box-shadow:var(--shadow)}
+.btn-teal:hover{transform:translateY(-2px);box-shadow:0 16px 34px -12px rgba(13,148,136,.45)}
+.btn-ghost{background:#fff;color:var(--teal-d);border:1.5px solid #99f6e4}
+.btn-ghost:hover{border-color:var(--teal);background:var(--teal-bg)}
+.btn-dark{background:#0f172a;color:#fff}
+.btn-dark:hover{transform:translateY(-2px)}
+/* ── Hero ── */
+.hero{background:linear-gradient(160deg,#0f172a 0%,#134e4a 55%,#0f766e 100%);color:#fff;padding:88px 0 96px;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(700px 340px at 85% 15%,rgba(20,184,166,.28),transparent 65%),radial-gradient(560px 300px at 10% 90%,rgba(245,158,11,.10),transparent 60%)}
+.hero-in{position:relative}
+.hero .pill{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);padding:7px 16px;border-radius:99px;font-size:13.5px;font-weight:500;color:#ccfbf1}
+.hero h1{font-size:clamp(30px,5vw,52px);font-weight:900;line-height:1.35;margin:22px 0 16px}
+.hero h1 .grad{background:linear-gradient(90deg,#5eead4,#99f6e4);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lead{font-size:clamp(15.5px,2vw,19px);color:#cbdae4;max-width:720px;font-weight:400}
+.hero-cta{display:flex;flex-wrap:wrap;gap:14px;margin-top:34px}
+.badges{display:flex;flex-wrap:wrap;gap:9px;margin-top:34px}
+.badge{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.16);color:#e2f5f3;padding:5px 13px;border-radius:9px;font-size:12.5px;font-weight:500}
+.badges img{filter:brightness(1.05);border-radius:4px}
+/* ── Stats ── */
+.stats{margin-top:-52px;position:relative;z-index:5}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px}
+.stat{background:#fff;border:1px solid var(--line);border-radius:var(--rad);padding:22px 18px;text-align:center;box-shadow:var(--shadow)}
+.stat b{display:block;font-size:31px;font-weight:900;color:var(--teal-d)}
+.stat span{font-size:13.5px;color:var(--soft);font-weight:500}
+/* ── Sections ── */
+section{padding:76px 0}
+.sec-head{text-align:center;max-width:640px;margin:0 auto 48px}
+.kicker{color:var(--teal);font-weight:700;font-size:13.5px;letter-spacing:.4px}
+.sec-head h2{font-size:clamp(24px,3.4vw,34px);font-weight:900;margin:8px 0 12px}
+.sec-head p{color:var(--mut);font-size:15.5px}
+/* ── Screenshots ── */
+.shots{display:grid;grid-template-columns:1.4fr 1fr;gap:20px}
+.shot{background:#fff;border:1px solid var(--line);border-radius:var(--rad);overflow:hidden;box-shadow:var(--shadow);transition:.25s}
+.shot:hover{transform:translateY(-4px);box-shadow:0 22px 44px -14px rgba(15,118,110,.28)}
+.shot .cap{padding:13px 18px;font-size:13.5px;color:var(--mut);border-top:1px solid var(--line);display:flex;align-items:center;gap:9px}
+.shot .cap b{color:var(--ink);font-size:14.5px}
+.shots-side{display:grid;gap:20px;align-content:start}
+/* ── Features ── */
+.feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+.feat{background:#fff;border:1px solid var(--line);border-radius:var(--rad);padding:26px 24px;transition:.22s;position:relative}
+.feat:hover{border-color:#99f6e4;box-shadow:var(--shadow);transform:translateY(-3px)}
+.feat .ic{width:46px;height:46px;border-radius:13px;background:var(--teal-bg);color:var(--teal-d);display:grid;place-items:center;font-size:22px;margin-bottom:14px}
+.feat h3{font-size:17px;font-weight:800;margin-bottom:7px}
+.feat p{font-size:14px;color:var(--mut)}
+.feat .tag{position:absolute;top:20px;left:20px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px}
+/* ── Timeline ── */
+.tl{position:relative;max-width:760px;margin:0 auto}
+.tl::before{content:'';position:absolute;top:6px;bottom:6px;right:15px;width:3px;background:linear-gradient(180deg,var(--teal-l),#99f6e4);border-radius:3px}
+.tl-item{position:relative;padding:0 52px 34px 0}
+.tl-item:last-child{padding-bottom:0}
+.tl-dot{position:absolute;right:6px;top:5px;width:21px;height:21px;border-radius:50%;background:#fff;border:4px solid var(--teal);box-shadow:0 0 0 4px var(--teal-bg)}
+.tl-item h4{font-size:16.5px;font-weight:800}
+.tl-item h4 .v{color:var(--teal-d);font-family:ui-monospace,monospace;font-size:14px;background:var(--teal-bg);padding:2px 10px;border-radius:7px;margin-inline-end:8px}
+.tl-item p{color:var(--mut);font-size:14px;margin-top:4px}
+/* ── Quickstart ── */
+.qs{background:#0f172a;color:#e2e8f0;border-radius:22px;padding:48px 40px;display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:center}
+.qs h2{font-size:27px;font-weight:900;color:#fff;margin-bottom:10px}
+.qs p{color:#94a3b8;font-size:14.5px}
+.code{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:20px 22px;font-family:ui-monospace,'SFMono-Regular',monospace;font-size:13.5px;line-height:2;direction:ltr;text-align:left;overflow-x:auto}
+.code .c{color:#64ffda}
+.code .k{color:#fbbf24}
+.acct{display:grid;gap:10px;margin-top:18px}
+.acct-row{display:flex;justify-content:space-between;background:rgba(255,255,255,.05);border:1px solid #334155;border-radius:10px;padding:9px 15px;font-size:13px;direction:ltr}
+.acct-row b{color:#5eead4}
+/* ── Roadmap ── */
+.rm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.rm{background:#fff;border:1px dashed #99f6e4;border-radius:var(--rad);padding:22px}
+.rm .n{font-size:12px;font-weight:800;color:var(--teal);background:var(--teal-bg);display:inline-block;padding:2px 12px;border-radius:99px;margin-bottom:10px}
+.rm h4{font-size:15.5px;font-weight:800;margin-bottom:6px}
+.rm p{font-size:13px;color:var(--mut)}
+/* ── Docs ── */
+.docs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.doc{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px;display:flex;gap:13px;align-items:flex-start;transition:.2s}
+.doc:hover{border-color:var(--teal);box-shadow:var(--shadow);transform:translateY(-2px)}
+.doc .em{font-size:21px}
+.doc b{display:block;font-size:14.5px;margin-bottom:3px}
+.doc span{font-size:12.5px;color:var(--soft)}
+/* ── Footer ── */
+footer{background:#0f172a;color:#94a3b8;padding:44px 0;font-size:13.5px}
+.foot-in{display:flex;flex-wrap:wrap;gap:18px;align-items:center;justify-content:space-between}
+footer a{color:#5eead4}
+.reveal{opacity:0;transform:translateY(22px);transition:opacity .6s ease,transform .6s ease}
+.reveal.on{opacity:1;transform:none}
+@media(max-width:900px){
+  .shots{grid-template-columns:1fr}
+  .qs{grid-template-columns:1fr;padding:36px 26px}
+  .nav-links{display:none}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-in">
+    <a class="brand" href="#"><span class="logo">💊</span> ربي فارمسي</a>
+    <div class="nav-links">
+      <a href="#features">المزايا</a>
+      <a href="#shots">الواجهة</a>
+      <a href="#start">البدء السريع</a>
+      <a href="#roadmap">خارطة الطريق</a>
+      <a href="#docs">الوثائق</a>
+    </div>
+    <a class="btn btn-teal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy" target="_blank" rel="noopener">GitHub ⭐</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <span class="pill">✦ مفتوح المصدر · MIT · بواجهة عربية RTL أصيلة</span>
+    <h1>نظام إدارة الصيدليات العربي <span class="grad">بسلامة دوائية حية</span></h1>
+    <p class="lead">نقطة بيع ببوابة سلامة دوائية: 26 تداخلاً موثقاً بآلية وإدارة ومصدر علمي، مطابقة حساسية متقاطعة، كشف العلاج المكرر (ATC)، مخزون بدفعات FEFO، موردون وأوامر شراء، تقارير ربحية بالتكلفة الفعلية — منصة PWA جاهزة للنشر على الويب ومتجر Google Play.</p>
+    <div class="hero-cta">
+      <a class="btn btn-teal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy" target="_blank" rel="noopener">تصفّح المستودع</a>
+      <a class="btn btn-ghost" href="#start">البدء في دقيقة</a>
+      <a class="btn btn-dark" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/docs/STEPS.md" target="_blank" rel="noopener">دليل النشر على Play 📱</a>
+    </div>
+    <div class="badges">
+      <img src="https://github.com/magedmorshed173-ai/ruba-pharmacy/actions/workflows/ci.yml/badge.svg" alt="CI">
+      <span class="badge">v3.5.0</span>
+      <span class="badge">Next.js 16</span>
+      <span class="badge">TypeScript 5</span>
+      <span class="badge">Prisma 6</span>
+      <span class="badge">Tailwind CSS 4</span>
+      <span class="badge">PWA Ready</span>
+      <span class="badge">Docker</span>
+      <span class="badge">License MIT</span>
+    </div>
+  </div>
+</header>
+
+<div class="stats">
+  <div class="wrap stats-grid">
+    <div class="stat"><b>26</b><span>تداخل دوائي موثق علمياً</span></div>
+    <div class="stat"><b>114</b><span>فحص آلي (51 وحدوي + 63 حي)</span></div>
+    <div class="stat"><b>14</b><span>نموذج بيانات Prisma</span></div>
+    <div class="stat"><b>5</b><span>إصدارات متتالية</span></div>
+  </div>
+</div>
+
+<section id="shots">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker">— واجهة المنتج —</div>
+      <h2>واجهة عربية أنيقة مصممة للاستخدام اليومي</h2>
+      <p>خط Tajawal، اتجاه RTL أصيل، وضع ليلي، وفواتير مطبوعة بمقاس 80مم — كل تفصيلة مدروسة.</p>
+    </div>
+    <div class="shots">
+      <figure class="shot reveal">
+        <img src="https://raw.githubusercontent.com/magedmorshed173-ai/ruba-pharmacy/main/docs/screenshots/dashboard.png" alt="لوحة التحكم" loading="lazy">
+        <figcaption class="cap"><b>لوحة التحكم</b> — مؤشرات حية للإيراد والمخزون والتنبيهات مع رسوم بيانية</figcaption>
+      </figure>
+      <div class="shots-side">
+        <figure class="shot reveal">
+          <img src="https://raw.githubusercontent.com/magedmorshed173-ai/ruba-pharmacy/main/docs/screenshots/pos.png" alt="نقطة البيع" loading="lazy">
+          <figcaption class="cap"><b>نقطة البيع</b> — سلة ذكية مع تحذيرات تداخلات فورية</figcaption>
+        </figure>
+        <figure class="shot reveal">
+          <img src="https://raw.githubusercontent.com/magedmorshed173-ai/ruba-pharmacy/main/docs/screenshots/login.png" alt="تسجيل الدخول" loading="lazy">
+          <figcaption class="cap"><b>الدخول الآمن</b> — JWT + تحديد معدل المحاولات</figcaption>
+        </figure>
+      </div>
+    </div>
+  </div>
+</section>
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker">— المزايا —</div>
+      <h2>كل ما تحتاجه الصيدلية في منصة واحدة</h2>
+      <p>مبني على أنماط الأنظمة الرائدة (Odoo، ERPNext، GNU Health) مع إغلاق الثغرات التي وجدناها فيها لصالح الصيدلية العربية.</p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat reveal">
+        <div class="ic">🛒</div>
+        <h3>نقطة بيع ذكية</h3>
+        <p>سلة تفاعلية ببحث فوري بالاسم أو الباركود، خصومات، دفع نقدي/شبكة، فاتورة رقمية بمقاس 80مم، ومنع تكرار البيع تقنياً عبر Idempotency.</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ic">⚠️</div>
+        <h3>بوابة السلامة الدوائية</h3>
+        <p>26 تداخلاً موثقاً بعد نمط Lexicomp/Stockley: أربع درجات شدة، الآلية الدوائية، الأثر السريري، خطة الإدارة، والمصدر العلمي — و«ممنوع سريرياً» يحجب البيع مع تجاوز مسؤول مسجّل للصيدلي (v3.5).</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ic">🧊</div>
+        <h3>دفعات LOT وصرف FEFO</h3>
+        <p>كل تشغيلة بصلاحية وتكلفة مستقلة، والأقرب انتهاءً يُصرف آلياً، والمنتهي محجوب حتى لو أظهر الرصيد توفره — بلا استثناءات.</p>
+      </div>
+      <div class="feat reveal">
+        <span class="tag">v3.2</span>
+        <div class="ic">🚚</div>
+        <h3>موردون وأوامر شراء</h3>
+        <p>سجل موردين كامل وأوامر شراء ببنود متعددة، والاستلام ذري: يولّد دفعات LOT بالتكلفة الفعلية ويحدّث الرصيد وسجل الحركات في معاملة واحدة.</p>
+      </div>
+      <div class="feat reveal">
+        <span class="tag">v3.3</span>
+        <div class="ic">📈</div>
+        <h3>ربحية بتكلفة فعلية</h3>
+        <p>لقطة تكلفة FEFO لحظة البيع لكل بند — هامش ربح حقيقي لكل صنف وفترة، لا تقديرات ولا متوسطات مضللة.</p>
+      </div>
+      <div class="feat reveal">
+        <span class="tag">v3.4</span>
+        <div class="ic">📷</div>
+        <h3>باركود بالكاميرا + وضع الاتصال</h3>
+        <p>مسح الباركود بكاميرا الجهاز عبر BarcodeDetector، مؤشر حالة اتصال حي، وحجب البيع عند انقطاع الشبكة لحماية البيانات.</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ic">🧬</div>
+        <h3>مطابقة الحساسية والعلاج المكرر (v3.5)</h3>
+        <p>حساسية «بنسلين» تحجب أموكسيسيلين وأوجمنتين تلقائياً عبر عائلات دوائية علمية، وأدوية الفئة العلاجية نفسها (ATC) تُرصد كمكررة داخل السلة.</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ic">📊</div>
+        <h3>تقارير وتنبؤ ذكي</h3>
+        <p>لوحة KPIs حية، مبيعات ومقارنات، تنبؤ إعادة الطلب بمعدل الاستهلاك ومهلة التوريد، وتصدير CSV لكل تقرير.</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ic">🔐</div>
+        <h3>أمان مؤسسي</h3>
+        <p>JWT في كوكي httpOnly، bcrypt، أدوار مركزية (مدير/صيدلي/فني)، تحديد معدل دخول، سجل تدقيق لكل محاولة، والنقود بالهللات — صفر أخطاء تقريب.</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ic">📱</div>
+        <h3>PWA + Docker جاهزان</h3>
+        <p>قابل للتثبيت على الجوال كتطبيق مستقل، قابل للتغليف TWA نحو Google Play، وصورة إنتاج Docker ب healthcheck ومستخدم غير جذر.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="background:#fff;border-block:1px solid var(--line)">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker">— رحلة التطوير —</div>
+      <h2>ستة إصدارات من الإطلاق إلى النضج</h2>
+      <p>تطور حقيقي موثق في CHANGELOG — كل إصدار أُغلق بمراجعة واختبارات وبناء إنتاجي ناجح عبر CI.</p>
+    </div>
+    <div class="tl">
+      <div class="tl-item reveal"><span class="tl-dot"></span>
+        <h4><span class="v">v3.0</span>الإطلاق الكامل</h4>
+        <p>منصة Next.js 16 بواجهة عربية RTL: نقطة بيع، مخزون، مرضى، تقارير، إشعارات، مستخدمون، نسخ احتياطي — مع إغلاق ثغرات النسخة القديمة.</p>
+      </div>
+      <div class="tl-item reveal"><span class="tl-dot"></span>
+        <h4><span class="v">v3.1</span>دفعات + FEFO + أمان</h4>
+        <p>تتبع تشغيلات LOT بصلاحية مستقلة، صرف FEFO آلي، تحديد معدل الدخول، وضع ليلي، فاتورة 80مم، وأول 19 اختبار وحدوي.</p>
+      </div>
+      <div class="tl-item reveal"><span class="tl-dot"></span>
+        <h4><span class="v">v3.2</span>سلسلة التوريد</h4>
+        <p>موردون وأوامر شراء باستلام ذري يولّد دفعات بالتكلفة الفعلية ويدمج التشغيلات المكررة بأمان.</p>
+      </div>
+      <div class="tl-item reveal"><span class="tl-dot"></span>
+        <h4><span class="v">v3.3</span>أرباح حقيقية وتدقيق</h4>
+        <p>لقطات تكلفة عند البيع وتقارير هامش ربح فعلي، مع سجل تدقيق كامل لكل محاولات تسجيل الدخول ولوحة أمان للمدير.</p>
+      </div>
+      <div class="tl-item reveal"><span class="tl-dot"></span>
+        <h4><span class="v">v3.4</span>الجوال أولاً</h4>
+        <p>مسح باركود بالكاميرا، مؤشر اتصال وحجب البيع دون شبكة — استعداداً لطابور أوفلاين كامل وتغليف TWA.</p>
+      </div>
+      <div class="tl-item reveal"><span class="tl-dot"></span>
+        <h4><span class="v">v3.5</span>العمق السريري</h4>
+        <p>بوابة سلامة دوائية في مسار البيع، 26 تداخلاً موثقاً بآلية وإدارة ومصدر، مطابقة حساسية متقاطعة، كشف العلاج المكرر، رؤوس أمان حديثة، و114 فحصاً آلياً بين وحدوي وحي.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <div class="qs reveal">
+      <div>
+        <h2>شغّلها في دقيقة واحدة</h2>
+        <p>ثلاثة أوامر فقط وتكون أمامك صيدلية كاملة ببيانات تجريبية واقعية: 28 دواء عربي، 6 تداخلات موثقة، وفواتير لثلاثين يوماً.</p>
+        <div class="acct">
+          <div class="acct-row"><span>admin</span><b>Admin@2026!</b><span>مدير</span></div>
+          <div class="acct-row"><span>pharmacist</span><b>Pharm@2026!</b><span>صيدلي</span></div>
+          <div class="acct-row"><span>tech1</span><b>Tech@2026!</b><span>فني</span></div>
+        </div>
+      </div>
+      <div class="code"><span class="c"># انسخ المستودع وثبّت التبعيات</span>
+git clone https://github.com/magedmorshed173-ai/ruba-pharmacy.git
+cd ruba-pharmacy && bun install
+
+<span class="c"># جهّز قاعدة البيانات والبيانات التجريبية</span>
+bunx prisma db push && bun scripts/seed.ts
+
+<span class="c"># انطلق</span>
+bun run dev
+<span class="c"># → http://localhost:3000</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="roadmap" style="padding-top:40px">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker">— ما القادم؟ —</div>
+      <h2>خارطة طريق شفافة نحو نظام مؤسسي</h2>
+      <p>مستمدة من التقييم المقارن المفصل في docs/EVALUATION.md مقابل الأنظمة العالمية.</p>
+    </div>
+    <div class="rm-grid">
+      <div class="rm reveal"><span class="n">المرحلة 1</span><h4>طابور أوفلاين كامل</h4><p>مزامنة تلقائية للفواتير المباعة دون شبكة عند عودة الاتصال — فوق الأساس الموجود في v3.4.</p></div>
+      <div class="rm reveal"><span class="n">المرحلة 2</span><h4>تعدد الفروع</h4><p>فروع مستقلة بمخزونها ومستخدميها مع لوحة تشغيل موحدة للإدارة العليا وترحيلات بين الفروع.</p></div>
+      <div class="rm reveal"><span class="n">المرحلة 3</span><h4>فاتورة ZATCA الإلكترونية</h4><p>توافق الفاتورة الإلكترونية السعودية (المرحلة الثانية) برمز QR وتوقيع رقمي.</p></div>
+      <div class="rm reveal"><span class="n">المرحلة 4</span><h4>تحقق بخطوتين 2FA</h4><p>TOTP لمديري النظام وحسابات حساسة مع رموز استرداد — طبقة حماية إضافية.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="docs" style="padding-top:20px">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker">— الوثائق —</div>
+      <h2>مكتبة وثائق على مستوى الشركات</h2>
+    </div>
+    <div class="docs-grid">
+      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/docs/STEPS.md" target="_blank" rel="noopener"><span class="em">🚀</span><div><b>STEPS.md</b><span>دليل التنفيذ الموحد: Vercel ← مفتاح ← AAB ← Play</span></div></a>
+      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/docs/ANDROID.md" target="_blank" rel="noopener"><span class="em">🤖</span><div><b>ANDROID.md</b><span>PWA → TWA → Google Play بالتفصيل</span></div></a>
+      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/docs/DEPLOYMENT.md" target="_blank" rel="noopener"><span class="em">☁️</span><div><b>DEPLOYMENT.md</b><span>نشر Vercel / Docker / Postgres</span></div></a>
+      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/docs/EVALUATION.md" target="_blank" rel="noopener"><span class="em">🔍</span><div><b>EVALUATION.md</b><span>تقييم مقارن مع الأنظمة الرائدة</span></div></a>
+      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/SECURITY.md" target="_blank" rel="noopener"><span class="em">🛡️</span><div><b>SECURITY.md</b><span>سياسة الإفصاح الأمني (48 ساعة)</span></div></a>
+      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/docs/PRIVACY_POLICY.md" target="_blank" rel="noopener"><span class="em">📜</span><div><b>PRIVACY_POLICY.md</b><span>سياسة خصوصية جاهزة للمتاجر</span></div></a>
+      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener"><span class="em">🤝</span><div><b>CONTRIBUTING.md</b><span>دليل المساهمة للمطورين</span></div></a>
+      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><span class="em">🗂️</span><div><b>CHANGELOG.md</b><span>سجل الإصدارات 1.0 → 3.4</span></div></a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-in">
+    <div>💊 <b style="color:#fff">ربي فارمسي</b> — نظام إدارة الصيدليات العربي المتكامل · رخصة MIT</div>
+    <div><a href="https://github.com/magedmorshed173-ai/ruba-pharmacy" target="_blank" rel="noopener">GitHub</a> · <a href="https://github.com/magedmorshed173-ai/ruba-pharmacy/issues" target="_blank" rel="noopener">Issues</a> · صُنع بعناية فريق Ruba Pharmacy © 2026</div>
+  </div>
+</footer>
+
+<script>
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('on');io.unobserve(e.target)}}),{threshold:.12});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>
