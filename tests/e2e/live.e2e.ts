@@ -579,7 +579,167 @@ async function scenarios(): Promise<void> {
     );
   }
 
-  // S22 — الخروج يبطل الجلسة (كوكي عديم الحالة يُمحى من العميل)
+  // S23 — طابور التحقق الصيدلي: إدخال → تحقق باركود → صرف ذري → رفض
+  console.log("\n▶ S23: طابور التحقق الصيدلي (Fill → Verify → Dispense)");
+  {
+    // المرضى مرتّبون بالاسم — نحدد صاحب الورفارين المزمن بهويته
+    const abdullah = patients.find((p: any) => p.nationalId === "1098447213");
+    const fatima = patients.find((p: any) => p.nationalId === "1077234518");
+    const khaled = patients.find((p: any) => p.nationalId === "1044558821");
+
+    // إدخال وصفة بلا مريض → 400
+    const noPatient = await req("POST", "/api/prescriptions", {
+      cookie: jar.tech1,
+      json: { items: [{ medicineId: medicineRows[0]?.id, quantity: 1 }] },
+    });
+    assert(noPatient.status === 400, "وصفة بلا مريض → 400");
+
+    // الفني يُدخل وصفة لمريض لديه وارفارين مزمن + بند أسبرين (تداخل patient-context)
+    const rxCreate = await req("POST", "/api/prescriptions", {
+      cookie: jar.tech1,
+      json: {
+        patientId: abdullah?.id,
+        doctorName: "د. اختبار E2E",
+        items: [
+          {
+            medicineId: medicineRows.find((m: any) => m.genericName === "aspirin")?.id,
+            quantity: 1,
+            instructions: "بعد الفطور",
+          },
+          {
+            medicineId: medicineRows.find((m: any) => m.genericName === "paracetamol")?.id,
+            quantity: 2,
+          },
+        ],
+      },
+    });
+    assert(rxCreate.status === 201, "إدخال الوصفة للطابور → 201", `وصل ${rxCreate.status}`);
+    const rx = rxCreate.body?.prescription;
+    assert(!!rx?.number, `رقم وصفة متسلسل (RX-${rx?.number})`);
+    assert(
+      (rxCreate.body?.clinicalReview?.interactions ?? []).some(
+        (h: any) => h.genericA === "warfarin" && h.context === "patient"
+      ),
+      "المراجعة السريرية الفورية تكشف وارفارين المزمن"
+    );
+
+    // الفني لا يتحقق (403 — حارس الدور)
+    const techVerify = await req("POST", `/api/prescriptions/${rx.id}/verify`, {
+      cookie: jar.tech1,
+      json: { scans: [{ medicineId: rx.items[0].medicineId, barcode: rx.items[0].medicine.barcode }] },
+    });
+    assert(techVerify.status === 403, "الفني: التحقق ممنوع (403)");
+
+    // باركود خاطئ → 400 مع تحديد البند
+    const wrongScan = await req("POST", `/api/prescriptions/${rx.id}/verify`, {
+      cookie: jar.pharmacist,
+      json: {
+        scans: [{ medicineId: rx.items[0].medicineId, barcode: "WRONG-BARCODE-000" }],
+      },
+    });
+    assert(wrongScan.status === 400, "باركود غير مطابق → 400");
+    assert(
+      String(wrongScan.body?.error ?? "").includes(rx.items[0].medicineName),
+      "رسالة الخطأ تحدد البند المخالف"
+    );
+
+    // باركود صحيح للبندين معاً → اكتمال التحقق
+    const okScan = await req("POST", `/api/prescriptions/${rx.id}/verify`, {
+      cookie: jar.pharmacist,
+      json: {
+        scans: rx.items.map((i: any) => ({ medicineId: i.medicineId, barcode: i.medicine.barcode })),
+      },
+    });
+    assert(okScan.status === 200, "تحقق بمطابقة باركود البندين → 200");
+    assert(okScan.body?.prescription?.status === "verified", "الحالة → verified");
+    assert(okScan.body?.remaining === 0, "لا بنود متبقية");
+    assert(!!okScan.body?.prescription?.verifiedAt, "ختم زمن للتحقق");
+
+    // الصرف قبل التحقق (وصفة ثانية) → 409
+    const rx2Create = await req("POST", "/api/prescriptions", {
+      cookie: jar.pharmacist,
+      json: {
+        patientId: fatima?.id,
+        items: [{ medicineId: medicineRows.find((m: any) => m.genericName === "ibuprofen")?.id, quantity: 1 }],
+      },
+    });
+    const rx2 = rx2Create.body?.prescription;
+    const earlyDispense = await req("POST", `/api/prescriptions/${rx2.id}/dispense`, {
+      cookie: jar.pharmacist,
+      json: {},
+    });
+    assert(earlyDispense.status === 409, "صرف وصفة لم تُتحقق → 409");
+
+    // رفض الوصفة الثانية بسبب موثق
+    const rxReject = await req("POST", `/api/prescriptions/${rx2.id}/reject`, {
+      cookie: jar.pharmacist,
+      json: { reason: "جرعة غير منطقية — عاد للطبيب" },
+    });
+    assert(rxReject.status === 200, "رفض بسبب موثق → 200");
+    assert(rxReject.body?.prescription?.status === "rejected", "الحالة → rejected");
+
+    // رفض بلا سبب → 400
+    const rx3 = await req("POST", "/api/prescriptions", {
+      cookie: jar.admin,
+      json: {
+        patientId: khaled?.id,
+        items: [{ medicineId: medicineRows.find((m: any) => m.genericName === "amoxicillin")?.id, quantity: 1 }],
+      },
+    });
+    const noReason = await req("POST", `/api/prescriptions/${rx3.body?.prescription?.id}/reject`, {
+      cookie: jar.admin,
+      json: { reason: "" },
+    });
+    assert(noReason.status === 400, "رفض بلا سبب → 400");
+
+    // صرف الوصفة المحققة — ذرياً عبر محرك البيع (FEFO + دفتر)
+    const qtyBefore = rx.items[0].medicine.quantity; // متوفر aspirin عند الإدخال
+    const dispense = await req("POST", `/api/prescriptions/${rx.id}/dispense`, {
+      cookie: jar.pharmacist,
+      json: { paymentMethod: "cash" },
+    });
+    assert(dispense.status === 201, "صرف الوصفة المحققة → 201", `وصل ${dispense.status}`);
+    assert(
+      dispense.body?.reference === `RX-${rx.number}`,
+      "مرجع الفاتورة RX-<رقم الوصفة>"
+    );
+    assert(!!dispense.body?.saleId, "فاتورة مرتبطة بالوصفة");
+
+    // مخزون aspirin نقص فعلياً بحجم الوصفة
+    const medAfter = await req(
+      "GET",
+      `/api/medicines?pageSize=100`,
+      { cookie: jar.admin }
+    );
+    const aspirinAfter = (medAfter.body?.results ?? []).find(
+      (m: any) => m.genericName === "aspirin"
+    );
+    assert(
+      aspirinAfter?.quantity === qtyBefore - 1,
+      `مخزون aspirin نقص بمقدار الوصفة (${qtyBefore} → ${aspirinAfter?.quantity})`
+    );
+
+    // حركة دفتر مرتبطة بمرجع الوصفة
+    const movement = await prisma.stockMovement.findFirst({
+      where: { reference: `RX-${rx.number}` },
+    });
+    assert(!!movement && movement.delta < 0, "حركة StockMovement مسجلة بمرجع RX");
+
+    // صرف مزدوج → 409 (بحالة الوصفة + قيد مرجع فاتورة فريد)
+    const doubleDispense = await req("POST", `/api/prescriptions/${rx.id}/dispense`, {
+      cookie: jar.pharmacist,
+      json: {},
+    });
+    assert(doubleDispense.status === 409, "الصرف المزدوج مرفوض (409)");
+
+    // تحقق وصفة مصروفة → 409
+    const verifyDispensed = await req("POST", `/api/prescriptions/${rx.id}/verify`, {
+      cookie: jar.pharmacist,
+      json: { scans: [{ medicineId: rx.items[0].medicineId, barcode: rx.items[0].medicine.barcode }] },
+    });
+    assert(verifyDispensed.status === 409, "تحقق وصفة مصروفة مرفوض (409)");
+  }
+
   console.log("\n▶ S22: الخروج يمحو كوكي الجلسة فوراً");
   {
     const out = await req("POST", "/api/auth/logout", { cookie: jar.tech1 });

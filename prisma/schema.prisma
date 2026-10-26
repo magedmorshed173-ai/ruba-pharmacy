@@ -65,6 +65,7 @@ model Medicine {
   movements StockMovement[]
   batches   Batch[]
   poItems   PurchaseOrderItem[]
+  prescriptionItems PrescriptionItem[]
 
   @@index([genericName, dosage])
   @@index([expiryDate])
@@ -239,6 +240,51 @@ model LoginAudit {
 
   @@index([createdAt])
   @@index([username])
+}
+
+// ──────────────────────── طابور التحقق الصيدلي ────────────────────────
+// المعيار الغربي (Fill → Verify → Dispense — PioneerRx/Epic Willow):
+// الوصفة تدخل طابوراً مستقلاً، صيدلي يتحقق منها بمطابقة باركود لكل بند،
+// ثم تُصرف ذرياً عبر محرك البيع نفسه (FEFO + بوابة سريرية + دفتر).
+
+model Prescription {
+  id               String    @id @default(cuid())
+  number           Int       @unique // يُولَّد خادمياً (max+1 داخل معاملة)
+  status           String    @default("pending") // pending | verified | rejected | dispensed
+  patientId        String?   // المريض — أساس المراجعة السريرية
+  patientName      String?   // لقطة اسم المريض
+  doctorName       String?   // الطبيب الواصف
+  notes            String?
+  rejectReason     String?   // إلزامي عند الرفض
+  clinicalOverride Boolean   @default(false) // تجاوز مسؤول مسجّل عند التحقق
+  createdBy        String    // من أدخل الوصفة (فني/صيدلي/مدير)
+  creatorName      String?   // لقطة اسم الداخل
+  verifiedBy       String?   // الصيدلي المتحقق
+  verifierName     String?
+  verifiedAt       DateTime?
+  saleId           String?   // الفاتورة الناتجة عن الصرف
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  items PrescriptionItem[]
+
+  @@index([status, createdAt])
+  @@index([patientId])
+}
+
+model PrescriptionItem {
+  id             String       @id @default(cuid())
+  prescriptionId String
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  medicineId     String
+  medicine       Medicine     @relation(fields: [medicineId], references: [id])
+  medicineName   String       // لقطة وقت الإدخال
+  quantity       Int
+  instructions   String?      // إرشادات الاستخدام
+  verified       Boolean      @default(false) // مطابقة باركود فردية لكل بند
+
+  @@index([prescriptionId])
+  @@index([medicineId])
 }
 
 // ───────────────────────────── المرضى ─────────────────────────────

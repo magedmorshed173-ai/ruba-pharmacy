@@ -13,6 +13,7 @@ import { ReportsView } from "./reports-view";
 import { NotificationsView } from "./notifications-view";
 import { UsersView } from "./users-view";
 import { SettingsView } from "./settings-view";
+import { VerifyQueueView } from "./verify-queue-view";
 import { LoginAuditsCard } from "./login-audits-card";
 import { OfflineBanner } from "./offline-banner";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -41,6 +42,7 @@ import {
   Menu,
   X,
   ChevronDown,
+  ClipboardCheck,
 } from "lucide-react";
 import { ROLE_LABEL } from "@/lib/role-label";
 import { useTheme } from "next-themes";
@@ -49,6 +51,7 @@ import { Sun, Moon } from "lucide-react";
 type ViewKey =
   | "dashboard"
   | "pos"
+  | "verify"
   | "inventory"
   | "suppliers"
   | "patients"
@@ -60,6 +63,7 @@ type ViewKey =
 const NAV: { key: ViewKey; label: string; icon: typeof LayoutDashboard; minRole?: string }[] = [
   { key: "dashboard", label: "الرئيسية", icon: LayoutDashboard },
   { key: "pos", label: "نقطة البيع", icon: ShoppingCart },
+  { key: "verify", label: "طابور التحقق", icon: ClipboardCheck },
   { key: "inventory", label: "المخزون", icon: Package },
   { key: "suppliers", label: "المشتريات", icon: Truck, minRole: "pharmacist" },
   { key: "patients", label: "المرضى", icon: UsersRound },
@@ -293,6 +297,7 @@ export function AppShell() {
         <main className="flex-1 p-4 lg:p-6">
           {view === "dashboard" && <DashboardView user={user} onNavigate={setView} />}
           {view === "pos" && <PosView user={user} onDone={refreshUnread} />}
+          {view === "verify" && <VerifyQueueView user={user} />}
           {view === "inventory" && <InventoryView user={user} />}
           {view === "suppliers" && user.role !== "technician" && <SuppliersView user={user} />}
           {view === "patients" && <PatientsView user={user} />}
@@ -308,7 +313,7 @@ export function AppShell() {
         </main>
 
         <footer className="mt-auto border-t bg-card/60 py-3 text-center text-xs text-muted-foreground">
-          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 3.4
+          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 3.6
         </footer>
       </div>
     </div>
