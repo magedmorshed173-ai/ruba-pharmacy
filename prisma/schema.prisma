@@ -62,6 +62,7 @@ model Medicine {
   registrationNo       String? // رقم التسجيل في السجل الوطني للدواء
   registryStatus       String   @default("registered") // registered | suspended | banned | unregistered
   maxRetailPrice       Int? // سقف السعر البيعي الوطني (هللات) — تجاوزه إنذار تسعيري
+  nationalDrugId       String? // ربط المنتج المحلي بسجله المرخص الوطني (v4.1)
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
@@ -72,12 +73,14 @@ model Medicine {
   prescriptionItems PrescriptionItem[]
   regulatoryActions RegulatoryAction[]
   reservations      StockReservation[]
+  nationalDrug      NationalDrug? @relation(fields: [nationalDrugId], references: [id])
 
   @@index([genericName, dosage])
   @@index([expiryDate])
   @@index([name])
   @@index([categoryId])
   @@index([atcClass])
+  @@index([nationalDrugId])
 }
 
 // دفعات (LOT) — المعيار العالمي في الصيدليات (Odoo/ERPNext):
@@ -426,4 +429,35 @@ model Drug {
   @@index([scientificName])
   @@index([category])
   @@index([isActive, tradeName])
+}
+
+// ── v4.1: الطبقة الوطنية المرخصة — سجل التراخيص الرسمي (نمط SFDA) ──
+// سجل مرجعي للمنتجات المرخصة رسمياً: رقم ترخيص الهيئة + السعر الرسمي
+// المعتمد + حالة الترخيص (سحب/تعليق يُحجَب تلقائياً بلا تجاوز).
+model NationalDrug {
+  id               String    @id @default(cuid())
+  registrationNo   String    @unique // رقم ترخيص الهيئة العامة للغذاء والدواء
+  tradeName        String // الاسم التجاري المرخص
+  genericName      String // المادة الفعالة — مفتاح المطابقة الاحتياطي
+  dosage           String? // التركيز (مثل 500 ملغ) — يُستخدم في المطابقة
+  form             String? // الشكل الصيدلاني
+  manufacturer     String // الشركة المرخصة
+  country          String? // بلد المنشأ
+  atcCode          String? // تصنيف ATC للمنتج المرخص
+  barcode          String?   @unique // GTIN — المطابقة المباشرة مع المخزون
+  licenseStatus    String    @default("licensed") // licensed | suspended | withdrawn | pending
+  officialPrice    Int? // السعر الرسمي المعتمد (هللات) — مرجع التسعير الوطني
+  priceEffectiveAt DateTime? // تاريخ سريان التسعير الرسمي
+  withdrawnAt      DateTime? // تاريخ السحب من السوق (عند withdrawn)
+  withdrawalReason String? // سبب السحب الموثق (مثل شوائب NDMA)
+  source           String    @default("SFDA") // جهة إصدار البيانات المرخصة
+  syncedAt         DateTime  @default(now()) // آخر مزامنة من المصدر
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  medicines Medicine[]
+
+  @@index([licenseStatus])
+  @@index([tradeName])
+  @@index([genericName])
 }

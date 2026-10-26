@@ -13,6 +13,11 @@ import {
   type InteractionSeverity,
 } from "@/lib/clinical";
 import {
+  buildLicenseAlerts,
+  type LicensedMedInput,
+  type NationalEntryInput,
+} from "@/lib/national-license";
+import {
   buildRegistryAlerts,
   hasRegistryBlock,
   type RegistryAlert,
@@ -56,6 +61,10 @@ export interface ReviewMeds {
   registrationNo?: string | null;
   sellingPrice?: number | null;
   maxRetailPrice?: number | null;
+  // v4.1 — الطبقة الوطنية المرخصة (مفاتيح المطابقة مع السجل المرخص)
+  barcode?: string | null;
+  dosage?: string | null;
+  nationalDrugId?: string | null;
 }
 
 function mapHit(
@@ -167,6 +176,36 @@ export async function reviewCartClinical(
     }))
   );
 
+  // الطبقة الوطنية المرخصة — v4.1: ترخيص SFDA + سحب تلقائي للمسحوب من السوق
+  // (المطابقة ضد السجل المرخص — المسحوب/المعلق يحجب بلا تجاوز)
+  const nationalEntries: NationalEntryInput[] = await db.nationalDrug.findMany({
+    select: {
+      id: true,
+      registrationNo: true,
+      tradeName: true,
+      genericName: true,
+      dosage: true,
+      manufacturer: true,
+      barcode: true,
+      licenseStatus: true,
+      officialPrice: true,
+    },
+  });
+  const licenseAlerts = buildLicenseAlerts(
+    cartMeds.map((m): LicensedMedInput => ({
+      id: m.id ?? "",
+      name: m.name,
+      dosage: m.dosage ?? null,
+      barcode: m.barcode ?? null,
+      registrationNo: m.registrationNo ?? null,
+      registryStatus: m.registryStatus ?? null,
+      nationalDrugId: m.nationalDrugId ?? null,
+      sellingPrice: m.sellingPrice ?? null,
+    })),
+    nationalEntries
+  );
+  const allRegistryAlerts: RegistryAlert[] = [...registryAlerts, ...licenseAlerts];
+
   const highestSeverity = interactions.reduce<InteractionSeverity | null>(
     (acc, h) =>
       !acc || SEVERITY_RANK[h.severity] > SEVERITY_RANK[acc] ? h.severity : acc,
@@ -177,8 +216,8 @@ export async function reviewCartClinical(
     interactions,
     allergyAlerts,
     duplicateTherapies,
-    registryAlerts,
-    registryBlocking: hasRegistryBlock(registryAlerts),
+    registryAlerts: allRegistryAlerts,
+    registryBlocking: hasRegistryBlock(allRegistryAlerts),
     highestSeverity,
     blocking: highestSeverity === "contraindicated" || allergyAlerts.length > 0,
     checkedGenerics: [...cartGenerics, ...patientGenerics],

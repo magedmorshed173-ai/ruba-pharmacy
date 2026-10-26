@@ -60,7 +60,17 @@ export interface RegistryMedInput {
 export interface RegistryAlert {
   medicineId?: string;
   medicine: string;
-  kind: "suspended" | "banned" | "unregistered" | "price_cap";
+  kind:
+    | "suspended"
+    | "banned"
+    | "unregistered"
+    | "price_cap"
+    // v4.1 — الطبقة الوطنية المرخصة (ترخيص SFDA)
+    | "withdrawn" // مسحوب من السوق بقرار الهيئة — حجب تلقائي
+    | "license_suspended" // ترخيص معلق — حجب تلقائي
+    | "unlisted" // غير مدرج في السجل المرخص — إنذار
+    | "license_pending" // ترخيص قيد التقييم — إنذار
+    | "license_mismatch"; // تعارض الحالة المحلية مع السجل — إنذار مراجعة
   severity: "hard_block" | "warning";
   status: RegistryStatus;
   message: string;

@@ -18,6 +18,7 @@ import {
   type ClinicalReview,
 } from "@/lib/clinical-review";
 import { isRegistryHardBlock } from "@/lib/registry";
+import { isLicenseHardBlock, parseLicenseStatus } from "@/lib/national-license";
 import {
   assertAvailable,
   mapActiveReservations,
@@ -86,6 +87,10 @@ export async function reviewSaleItems(
       registrationNo: true,
       sellingPrice: true,
       maxRetailPrice: true,
+      // v4.1 — مفاتيح المطابقة مع السجل الوطني المرخص
+      barcode: true,
+      dosage: true,
+      nationalDrugId: true,
     },
   });
   return reviewCartClinical(reviewMeds, patientId ?? undefined);
@@ -122,9 +127,12 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
         i.barcode ? { barcode: String(i.barcode).trim() } : { id: String(i.medicineId) }
       );
 
-      // قفل منطقي: جلب الأدوية داخل المعاملة
+      // قفل منطقي: جلب الأدوية داخل المعاملة (مع سجل الترخيص الوطني المرتبط)
       const meds = await tx.medicine.findMany({
         where: { OR: keys, isActive: true },
+        include: {
+          nationalDrug: { select: { licenseStatus: true, tradeName: true } },
+        },
       });
       const medMap = new Map(meds.map((m) => [m.barcode, m]));
       const idMap = new Map(meds.map((m) => [m.id, m]));
@@ -135,6 +143,15 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
           throw new RegistryBlockError(
             `«${med.name}» محجوب تنظيمياً من السجل الوطني — لا يُصرف`
           );
+        // v4.1 — حجب تلقائي للترخيص المسحوب/المعلق (حتى لو لم تُنفّذ مزامنة الحالة بعد)
+        if (med.nationalDrug && isLicenseHardBlock(med.nationalDrug.licenseStatus)) {
+          const lic = parseLicenseStatus(med.nationalDrug.licenseStatus);
+          throw new RegistryBlockError(
+            lic === "withdrawn"
+              ? `«${med.name}» مسحوب من السوق بقرار الهيئة — حجب تلقائي ولا يُصرف`
+              : `ترخيص «${med.name}» معلق لدى الهيئة — الحجب تلقائي ولا يُصرف`
+          );
+        }
       }
 
       // المحجوز للوصفات الأخرى قيد الطابور — حماية الوحدات الموعودة
