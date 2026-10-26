@@ -142,7 +142,7 @@ footer a{color:#5eead4}
   <div class="wrap hero-in">
     <span class="pill">✦ مفتوح المصدر · MIT · بواجهة عربية RTL أصيلة</span>
     <h1>نظام إدارة الصيدليات العربي <span class="grad">بسلامة دوائية حية</span></h1>
-    <p class="lead">نقطة بيع ببوابة سلامة دوائية: 26 تداخلاً موثقاً بآلية وإدارة ومصدر علمي، مطابقة حساسية متقاطعة، كشف العلاج المكرر (ATC)، مخزون بدفعات FEFO، موردون وأوامر شراء، تقارير ربحية بالتكلفة الفعلية — منصة PWA جاهزة للنشر على الويب ومتجر Google Play.</p>
+    <p class="lead">نقطة بيع ببوابة سلامة دوائية: 26 تداخلاً موثقاً بآلية وإدارة ومصدر علمي، طابور تحقق صيدلي بمطابقة باركود (Fill → Verify → Dispense)، مخزون بدفعات FEFO، موردون وأوامر شراء، تقارير ربحية بالتكلفة الفعلية — منصة PWA جاهزة للنشر على الويب ومتجر Google Play.</p>
     <div class="hero-cta">
       <a class="btn btn-teal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy" target="_blank" rel="noopener">تصفّح المستودع</a>
       <a class="btn btn-ghost" href="#start">البدء في دقيقة</a>
@@ -150,13 +150,13 @@ footer a{color:#5eead4}
     </div>
     <div class="badges">
       <img src="https://github.com/magedmorshed173-ai/ruba-pharmacy/actions/workflows/ci.yml/badge.svg" alt="CI">
-      <span class="badge">v3.5.0</span>
+      <span class="badge">v3.6.0</span>
       <span class="badge">Next.js 16</span>
       <span class="badge">TypeScript 5 Strict</span>
       <span class="badge">Prisma 6</span>
       <span class="badge">Tailwind CSS 4</span>
       <span class="badge">CSP + HSTS</span>
-      <span class="badge">114 فحص اختبار حي</span>
+      <span class="badge">136 فحص اختبار حي</span>
       <span class="badge">PWA Ready</span>
       <span class="badge">Docker</span>
       <span class="badge">License MIT</span>
@@ -167,7 +167,7 @@ footer a{color:#5eead4}
 <div class="stats">
   <div class="wrap stats-grid">
     <div class="stat"><b>26</b><span>تداخل دوائي موثق علمياً</span></div>
-    <div class="stat"><b>114</b><span>فحص آلي (51 وحدوي + 63 حي)</span></div>
+    <div class="stat"><b>136</b><span>فحص حي (51 وحدوي + 85 E2E)</span></div>
     <div class="stat"><b>14</b><span>نموذج بيانات Prisma</span></div>
     <div class="stat"><b>6</b><span>إصدارات متتالية</span></div>
   </div>
@@ -293,7 +293,11 @@ footer a{color:#5eead4}
       </div>
       <div class="tl-item reveal"><span class="tl-dot"></span>
         <h4><span class="v">v3.5</span>العمق السريري</h4>
-        <p>بوابة سلامة دوائية في مسار البيع، 26 تداخلاً موثقاً بآلية وإدارة ومصدر، مطابقة حساسية متقاطعة، كشف العلاج المكرر، رؤوس أمان حديثة، و114 فحصاً آلياً بين وحدوي وحي.</p>
+        <p>بوابة سلامة دوائية في مسار البيع، 26 تداخلاً موثقاً بآلية وإدارة ومصدر، مطابقة حساسية متقاطعة، كشف العلاج المكرر، رؤوس أمان حديثة، و136 فحصاً حياً بين وحدوي وE2E.</p>
+      </div>
+      <div class="tl-item reveal"><span class="tl-dot"></span>
+        <h4><span class="v">v3.6</span>طابور التحقق الصيدلي</h4>
+        <p>سير عمل Fill → Verify → Dispense بعد معايير PioneerRx: الوصفة تدخل الطابور ولا تُصرف إلا بعد مطابقة باركود لكل بند على يد صيدلي مستقل — وصرف ذري عبر محرك بيع موحد بفاتورة RX مستحيلة التكرار.</p>
       </div>
     </div>
   </div>
@@ -355,7 +359,7 @@ bun run dev
       <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/SECURITY.md" target="_blank" rel="noopener"><span class="em">🛡️</span><div><b>SECURITY.md</b><span>سياسة الإفصاح الأمني (48 ساعة)</span></div></a>
       <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/docs/PRIVACY_POLICY.md" target="_blank" rel="noopener"><span class="em">📜</span><div><b>PRIVACY_POLICY.md</b><span>سياسة خصوصية جاهزة للمتاجر</span></div></a>
       <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener"><span class="em">🤝</span><div><b>CONTRIBUTING.md</b><span>دليل المساهمة للمطورين</span></div></a>
-      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><span class="em">🗂️</span><div><b>CHANGELOG.md</b><span>سجل الإصدارات 1.0 → 3.5</span></div></a>
+      <a class="doc reveal" href="https://github.com/magedmorshed173-ai/ruba-pharmacy/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><span class="em">🗂️</span><div><b>CHANGELOG.md</b><span>سجل الإصدارات 1.0 → 3.6</span></div></a>
     </div>
   </div>
 </section>
