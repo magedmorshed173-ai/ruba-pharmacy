@@ -5,6 +5,7 @@ import {
   computeSyncPlan,
   parseLicenseStatus,
   summarizeSyncPlan,
+  type LicenseStatus,
   type LicensedMedInput,
   type NationalEntryInput,
 } from "@/lib/national-license";
@@ -18,7 +19,7 @@ import {
  *   عن السعر الرسمي المعتمد، وغير المدرج في السجل.
  *
  * POST /api/national-registry  (مدير فقط — نمط مصدر البيانات المرخص)
- *   body: { entries?: EntryPayload[] }
+ *   body: { entries?: EntryPayload[] } // سجلات خام — تُنقّى قبل الاستيراد
  *   - مع entries: استيراد/تحديث سجلات الترخيص (upsert برقم الترخيص) ثم
  *     تطبيق خطة المزامنة كاملة على المخزون.
  *   - بلا entries: إعادة تطبيق الخطة على السجل الموجود (تصحيح انحراف محلي).
@@ -30,10 +31,11 @@ import {
  *   - السعر الرسمي المعتمد يصبح سقف البيع ما لم يوجد سقف محلي أشد.
  */
 
+/** سجل خام وارد من مصدر البيانات المرخص — قبل التنقية */
 interface EntryPayload {
-  registrationNo: string;
-  tradeName: string;
-  genericName: string;
+  registrationNo?: string;
+  tradeName?: string;
+  genericName?: string;
   dosage?: string | null;
   form?: string | null;
   manufacturer?: string | null;
@@ -45,6 +47,24 @@ interface EntryPayload {
   withdrawnAt?: string | null;
   withdrawalReason?: string | null;
   source?: string | null;
+}
+
+/** سجل مرخص بعد التنقية — الحقول الإلزامية مضمونة والقيم النصية مُحلّلة */
+interface CleanedEntry {
+  registrationNo: string;
+  tradeName: string;
+  genericName: string;
+  dosage: string | null;
+  form: string | null;
+  manufacturer: string | null;
+  country: string | null;
+  atcCode: string | null;
+  barcode: string | null;
+  licenseStatus: LicenseStatus;
+  officialPrice: number | null;
+  withdrawnAt: string | null;
+  withdrawalReason: string | null;
+  source: string;
 }
 
 const MED_SYNC_SELECT = {
@@ -113,8 +133,7 @@ export async function POST(request: NextRequest) {
     // ── 1) التحقق من السجلات الواردة من المصدر ──
     const seenReg = new Set<string>();
     const seenBarcode = new Set<string>();
-    const cleaned: Required<Pick<EntryPayload, "registrationNo" | "tradeName" | "genericName" | "licenseStatus" | "source">> &
-      EntryPayload[] = [];
+    const cleaned: CleanedEntry[] = [];
     for (const raw of payloadEntries) {
       const registrationNo = String(raw?.registrationNo ?? "").trim();
       const tradeName = String(raw?.tradeName ?? "").trim();
@@ -170,7 +189,8 @@ export async function POST(request: NextRequest) {
           genericName: e.genericName,
           dosage: e.dosage,
           form: e.form,
-          manufacturer: e.manufacturer,
+          // المخطط يمنع null — السجل الناقص المصنّع يُدوَّن كناقل بيانات
+          manufacturer: e.manufacturer ?? "غير محدد",
           country: e.country,
           atcCode: e.atcCode,
           barcode: e.barcode,

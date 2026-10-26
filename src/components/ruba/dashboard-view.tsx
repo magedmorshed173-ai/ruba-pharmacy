@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, fmtDate, fmtMoney, fmtNum, PAYMENT_LABEL } from "@/lib/api-client";
-import type { AuthUser } from "@/lib/api-client";
+import type { AuthUser } from "@/lib/types";
 import { StatCard, EmptyState, LoadingRows } from "./shared";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";

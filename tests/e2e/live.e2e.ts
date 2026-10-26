@@ -17,13 +17,19 @@ const ROOT = path.resolve(__dirname, "../..");
 const PORT = process.env.E2E_PORT || "3987";
 const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = path.join(ROOT, ".tmp-e2e");
-const DB_FILE = path.join(TMP, "e2e.db");
-const DATABASE_URL = `file:${DB_FILE}`;
 
-process.env.DATABASE_URL = DATABASE_URL;
 process.env.AUTH_SECRET = "e2e-live-secret-not-for-production";
+// v4.3 — حارس عزل: يعطّل dotenv override داخل السكربتات والخادم المُشغّل
+// من الحاضنة، فلا يتسرب الاتصال إلى قاعدة Neon الحقيقية من ملف .env
+process.env.DOTENV_KEEP_ENV = "1";
 
-const prisma = new PrismaClient({ datasourceUrl: DATABASE_URL });
+// v4.3 — منذ ترحيل v4.2 أصبح المخطط postgresql، لذا يعمل الجناح على فرع Neon
+// مؤقت (نسخة كوبية معزولة تُنشأ قبل التشغيل وتُحذف بعده) — بدل SQLite الموقوف.
+// بديل يدوي: مرّر E2E_DATABASE_URL (+ E2E_DIRECT_URL اختيارياً) بلا مفتاح Neon.
+// بلا بيانات اعتماد → تخطٍّ واضح (exit 0) حتى يبقى CI أخضر بلا أسرار.
+let DATABASE_URL = ""; // pooled — للتشغيل والاختبار
+let DIRECT_URL = ""; // مباشر — للترحيل (db push)
+let prisma = null as unknown as PrismaClient;
 
 // ───────────────────────── أدوات ─────────────────────────
 let passed = 0;
@@ -88,6 +94,160 @@ async function login(username: string, password: string): Promise<void> {
 
 let server: ChildProcess | null = null;
 
+// ───────────────────────── فرع Neon المؤقت (v4.3) ─────────────────────────
+const NEON_API = "https://console.neon.tech/api/v2";
+
+interface E2EDatabase {
+  pooled: string;
+  direct: string;
+  projectId?: string;
+  branchId?: string;
+}
+let e2eDb: E2EDatabase | null = null;
+
+function maskUrl(u: string): string {
+  return u.replace(/\/\/([^:]+):([^@]+)@/, "//$1:***@");
+}
+
+async function neonFetch(path: string, init?: RequestInit): Promise<any> {
+  const res = await fetch(`${NEON_API}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${process.env.NEON_API_KEY}`,
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Neon API ${res.status} على ${path}: ${t.slice(0, 200)}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+async function provisionE2EDatabase(): Promise<void> {
+  // وضع يدوي — بلا Neon (تطوير محلي على Postgres جاهز)
+  if (process.env.E2E_DATABASE_URL) {
+    e2eDb = {
+      pooled: process.env.E2E_DATABASE_URL,
+      direct: process.env.E2E_DIRECT_URL ?? process.env.E2E_DATABASE_URL,
+    };
+    console.log("🔌 قاعدة E2E يدوية (E2E_DATABASE_URL)");
+    return;
+  }
+
+  const apiKey = process.env.NEON_API_KEY;
+  const parentDirect =
+    process.env.DIRECT_URL ?? process.env.NEON_PARENT_DATABASE_URL;
+  const parentPooled =
+    (process.env.DATABASE_URL?.startsWith("postgresql")
+      ? process.env.DATABASE_URL
+      : undefined) ?? process.env.NEON_PARENT_POOLED_URL;
+  if (!apiKey || !parentDirect) {
+    console.log(
+      "⏭️  تخطي الاختبارات الحية: لا NEON_API_KEY ولا E2E_DATABASE_URL —\n   لتفعيلها اضبط NEON_API_KEY + (DIRECT_URL أو NEON_PARENT_DATABASE_URL)، أو مرّر E2E_DATABASE_URL"
+    );
+    process.exit(0);
+  }
+
+  console.log("☁️  توفير فرع Neon مؤقت لجلسة E2E…");
+
+  // 1) المشروع (بالاسم افتراضياً — أو NEON_PROJECT_ID)
+  let projectId = process.env.NEON_PROJECT_ID;
+  if (!projectId) {
+    const list = await neonFetch("/projects");
+    const found = (list?.projects ?? []).find(
+      (p: any) => p.name === "ruba-pharmacy"
+    );
+    if (!found) throw new Error("مشروع ruba-pharmacy غير موجود في Neon");
+    projectId = found.id;
+  }
+
+  // 2) الفرع الأولي (الأصل)
+  const branches = await neonFetch(`/projects/${projectId}/branches`);
+  const primary =
+    (branches?.branches ?? []).find((b: any) => b.primary) ??
+    (branches?.branches ?? []).find((b: any) => b.name === "main") ??
+    (branches?.branches ?? [])[0];
+  if (!primary?.id) throw new Error("لا فرع أولي في مشروع Neon");
+
+  // 3) إنشاء الفرع المؤقت (نسخة كوبية كاملة من الأصل — نفس الأدوار والكلمات)
+  //    ⚠️ v2 لا ينشئ نقطة حوسبة تلقائياً — تُطلب صراحة وإلا بلا مضيف للاتصال
+  const created = await neonFetch(`/projects/${projectId}/branches`, {
+    method: "POST",
+    body: JSON.stringify({
+      branch: { name: `e2e-${Date.now()}`, parent_id: primary.id },
+      endpoints: [{ type: "read_write" }],
+    }),
+  });
+  const branch = created?.branch;
+  if (!branch?.id) throw new Error(`فشل إنشاء فرع E2E في Neon`);
+
+  // سجّل الفرع فوراً — أي فشل لاحق تنظّفه الضمانة في finally
+  e2eDb = { pooled: "", direct: "", projectId, branchId: branch.id };
+
+  // نقطة النهاية تُنشأ لمزاماً — تتبّع حتى ظهور مضيفها ثم جهوزيتها (لا عمليات معلقة)
+  let epHost: string | undefined;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 90_000) {
+    if (!epHost) {
+      const eps = await neonFetch(`/projects/${projectId}/endpoints`);
+      epHost = (eps?.endpoints ?? []).find(
+        (e: any) => e.branch_id === branch.id
+      )?.host;
+    }
+    if (epHost) {
+      const ops = await neonFetch(
+        `/projects/${projectId}/operations?branch_id=${branch.id}`
+      );
+      const pending = (ops?.operations ?? []).filter(
+        (o: any) => o.status === "running" || o.status === "pending"
+      );
+      if (pending.length === 0) break;
+    }
+    await sleep(1500);
+  }
+  if (!epHost)
+    throw new Error("فرع E2E أُنشئ لكن نقطة نهايته لم تجهز خلال 90 ثانية");
+  console.log(`   الفرع: ${branch.name} · نقطة النهاية جاهزة`);
+
+  // 5) روابط الفرع: نفس بيانات الأصل مع استبدال المضيف —
+  //    pooled للتشغيل (‎-pooler‎) والمباشر للترحيل
+  const swapHost = (url: string, pooled: boolean) => {
+    const u = new URL(url);
+    let host = epHost!;
+    if (pooled && !host.includes("-pooler"))
+      host = host.replace(/^(ep-[^.]+)/, "$1-pooler");
+    u.host = host;
+    u.searchParams.set("sslmode", "require");
+    return u.toString();
+  };
+  e2eDb = {
+    pooled: swapHost(parentPooled ?? parentDirect, true),
+    direct: swapHost(parentDirect, false),
+    projectId,
+    branchId: branch.id,
+  };
+  console.log(`   ✓ جاهز: ${maskUrl(e2eDb.pooled).split("@")[1] ?? "(masked)"}`);
+}
+
+async function cleanupE2EDatabase(): Promise<void> {
+  if (!e2eDb?.projectId || !e2eDb?.branchId) return;
+  try {
+    await neonFetch(
+      `/projects/${e2eDb.projectId}/branches/${e2eDb.branchId}`,
+      { method: "DELETE" }
+    );
+    console.log("🧹 فرع E2E المؤقت حُذف من Neon");
+  } catch (e) {
+    console.log(
+      `⚠️ تعذر حذف فرع E2E (${e2eDb.branchId}) — احذفه يدوياً من اللوحة: ${
+        e instanceof Error ? e.message : e
+      }`
+    );
+  }
+}
+
 async function startServer(): Promise<void> {
   server = spawn("bun", ["server.js"], {
     cwd: path.join(ROOT, ".next/standalone"),
@@ -96,6 +256,7 @@ async function startServer(): Promise<void> {
       PORT,
       HOSTNAME: "127.0.0.1",
       DATABASE_URL,
+      DIRECT_URL,
       AUTH_SECRET: process.env.AUTH_SECRET!,
       NODE_ENV: "production",
     },
@@ -127,20 +288,27 @@ function stopServer() {
 
 // ───────────────────────── الإعداد ─────────────────────────
 async function setup(): Promise<void> {
+  await provisionE2EDatabase();
+  DATABASE_URL = e2eDb!.pooled;
+  DIRECT_URL = e2eDb!.direct;
+  process.env.DATABASE_URL = DATABASE_URL;
+  process.env.DIRECT_URL = DIRECT_URL;
+  prisma = new PrismaClient({ datasourceUrl: DATABASE_URL });
+
   console.log("⚙️  تجهيز قاعدة بيانات E2E حية…");
   fs.rmSync(TMP, { recursive: true, force: true });
   fs.mkdirSync(TMP, { recursive: true });
 
   const push = spawnSync("bunx", ["prisma", "db", "push", "--skip-generate"], {
     cwd: ROOT,
-    env: { ...process.env, DATABASE_URL },
+    env: { ...process.env, DATABASE_URL: DIRECT_URL, DIRECT_URL },
     encoding: "utf-8",
   });
   if (push.status !== 0) throw new Error(`prisma db push فشل:\n${push.stderr}`);
 
   const seed = spawnSync("bun", ["scripts/seed.ts"], {
     cwd: ROOT,
-    env: { ...process.env, DATABASE_URL },
+    env: { ...process.env, DATABASE_URL, DIRECT_URL },
     encoding: "utf-8",
   });
   if (seed.status !== 0) throw new Error(`seed فشل:\n${seed.stderr}`);
@@ -148,10 +316,18 @@ async function setup(): Promise<void> {
   // v4.0: دليل الدواء المرخص — idempotent، يلي seed الأساسي دائماً
   const seedDrugs = spawnSync("bun", ["scripts/seed-drugs.ts"], {
     cwd: ROOT,
-    env: { ...process.env, DATABASE_URL },
+    env: { ...process.env, DATABASE_URL, DIRECT_URL },
     encoding: "utf-8",
   });
   if (seedDrugs.status !== 0) throw new Error(`seed-drugs فشل:\n${seedDrugs.stderr}`);
+
+  // v4.1: السجل الوطني المرخص — يلي seed-drugs (يشتق التراخيص من كتالوغه)
+  const seedNational = spawnSync("bun", ["scripts/seed-national.ts"], {
+    cwd: ROOT,
+    env: { ...process.env, DATABASE_URL, DIRECT_URL },
+    encoding: "utf-8",
+  });
+  if (seedNational.status !== 0) throw new Error(`seed-national فشل:\n${seedNational.stderr}`);
 
   console.log("🚀 تشغيل خادم الإنتاج (standalone)…");
   await startServer();
@@ -1694,6 +1870,70 @@ async function scenarios(): Promise<void> {
     // تنظيف البطاقة المؤقتة
     await prisma.drug.delete({ where: { id: newId } });
   }
+
+  // S35 — لوحة مراقبة السجل المرخص: قراءة عامة، مزامنة للمدير فقط (v4.3)
+  console.log("\n▶ S35: السجل المرخص — المراقبة والمطابقة وصلاحيات المزامنة");
+  {
+    const anon = await req("GET", "/api/national-registry");
+    assert(anon.status === 401, "قراءة السجل بلا جلسة → 401", `وصل ${anon.status}`);
+
+    const g = await req("GET", "/api/national-registry", { cookie: jar.tech1 });
+    assert(g.status === 200, "فني يقرأ السجل (المراقبة لكل الأدوار) → 200", `وصل ${g.status}`);
+    const summary = g.body?.summary;
+    const matches: any[] = g.body?.matches ?? [];
+    const entries: any[] = g.body?.entries ?? [];
+    assert(
+      summary && summary.total >= 25 && summary.matched >= 25,
+      "ملخص الخطة حي: منتجات خاضعة ومطابقة عالية",
+      JSON.stringify(summary)?.slice(0, 120)
+    );
+    assert(entries.length >= 25, "سجل التراخيص مستورد (≥ 25 سجل)", `وصل ${entries.length}`);
+
+    const ran = matches.find((m) => /رانيتيدين/.test(m.name));
+    assert(
+      !!ran && ran.matched && ran.licenseStatus === "withdrawn",
+      "رانيتيدين مربوط بترخيص مسحوب في الخطة الحية",
+      JSON.stringify(ran)?.slice(0, 140)
+    );
+    assert(
+      (ran?.alerts ?? []).some((a) => a.blocking === true),
+      "إنذار حاجب حي (بلا تجاوز) لرانيتيدين"
+    );
+    assert(
+      ran?.effectiveStatus === "suspended",
+      "الحالة الفعلية لرانيتيدين معلقة (تصعيد بلا رجوع)"
+    );
+
+    const priceDeviations = matches.filter((m) =>
+      (m.alerts ?? []).some((a: any) => a.kind === "price_cap")
+    );
+    assert(priceDeviations.length >= 1, "انحرافات السعر الرسمي ظاهرة في الخطة");
+
+    const postPh = await req("POST", "/api/national-registry", { cookie: jar.pharmacist, json: {} });
+    assert(postPh.status === 403, "صيدلي → 403 (المزامنة للمدير فقط)", `وصل ${postPh.status}`);
+    const postTech = await req("POST", "/api/national-registry", { cookie: jar.tech1, json: {} });
+    assert(postTech.status === 403, "فني → 403", `وصل ${postTech.status}`);
+
+    const bad = await req("POST", "/api/national-registry", {
+      cookie: jar.admin,
+      json: { entries: [{ registrationNo: "", tradeName: "", genericName: "" }] },
+    });
+    assert(bad.status === 400, "سجل ناقص الحقول → 400", `وصل ${bad.status}`);
+
+    const apply = await req("POST", "/api/national-registry", {
+      cookie: jar.admin,
+      json: { apply: true },
+    });
+    assert(
+      apply.status === 201 && apply.body?.applied === true,
+      "المدير يعيد تطبيق الخطة ذرياً → 201",
+      `وصل ${apply.status} — ${JSON.stringify(apply.body)?.slice(0, 120)}`
+    );
+    assert(
+      apply.body?.summary?.blockingAlerts >= 1,
+      "ما بعد التطبيق: حجب حي مستقر في المصفوفة"
+    );
+  }
 }
 
 // ───────────────────────── التشغيل ─────────────────────────
@@ -1707,7 +1947,8 @@ async function main() {
     console.error(e);
   } finally {
     stopServer();
-    await prisma.$disconnect();
+    await prisma?.$disconnect().catch(() => {});
+    await cleanupE2EDatabase();
   }
 
   console.log("\n════════════════════════════════════");

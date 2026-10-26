@@ -38,9 +38,15 @@ jobs:
         env:
           DATABASE_URL: file:./db/ci.db
 
-      # الاختبارات الحية: خادم إنتاجي حقيقي + قاعدة بيانات حقيقية + HTTP فعلي
+      # الاختبارات الحية (v4.3): خادم إنتاجي حقيقي + فرع Neon مؤقت + HTTP فعلي
+      # بلا أسرار Neon يتخطى الجناح بلطف (exit 0) — لتفعيله أضف أسرار الريبو:
+      #   NEON_API_KEY + NEON_PROJECT_ID + NEON_PARENT_DATABASE_URL (رابط مباشر للأصل)
+      #   (+ NEON_PARENT_POOLED_URL اختيارياً — وإلا يُشتق من المباشر)
       - name: Live E2E suite (real server, real DB)
         run: bun run test:e2e
         env:
-          DATABASE_URL: file:./db/e2e.db
           AUTH_SECRET: ci-e2e-secret-not-for-production
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PARENT_DATABASE_URL: ${{ secrets.NEON_PARENT_DATABASE_URL }}
+          NEON_PARENT_POOLED_URL: ${{ secrets.NEON_PARENT_POOLED_URL }}

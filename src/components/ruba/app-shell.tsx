@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import { api, type AuthUser } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
+import type { AuthUser } from "@/lib/types";
 import { LoginView } from "./login-view";
 import { DashboardView } from "./dashboard-view";
 import { PosView } from "./pos-view";
@@ -15,6 +16,7 @@ import { UsersView } from "./users-view";
 import { SettingsView } from "./settings-view";
 import { VerifyQueueView } from "./verify-queue-view";
 import { DrugGuideView } from "./drug-guide-view";
+import { NationalRegistryView } from "./national-registry-view";
 import { LoginAuditsCard } from "./login-audits-card";
 import { OfflineBanner } from "./offline-banner";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -45,6 +47,7 @@ import {
   ChevronDown,
   ClipboardCheck,
   BookOpen,
+  Landmark,
 } from "lucide-react";
 import { ROLE_LABEL } from "@/lib/role-label";
 import { useTheme } from "next-themes";
@@ -55,6 +58,7 @@ type ViewKey =
   | "pos"
   | "verify"
   | "inventory"
+  | "registry"
   | "suppliers"
   | "patients"
   | "guide"
@@ -68,6 +72,7 @@ const NAV: { key: ViewKey; label: string; icon: typeof LayoutDashboard; minRole?
   { key: "pos", label: "نقطة البيع", icon: ShoppingCart },
   { key: "verify", label: "طابور التحقق", icon: ClipboardCheck },
   { key: "inventory", label: "المخزون", icon: Package },
+  { key: "registry", label: "السجل الوطني", icon: Landmark },
   { key: "suppliers", label: "المشتريات", icon: Truck, minRole: "pharmacist" },
   { key: "patients", label: "المرضى", icon: UsersRound },
   { key: "guide", label: "دليل الدواء", icon: BookOpen },
@@ -303,6 +308,7 @@ export function AppShell() {
           {view === "pos" && <PosView user={user} onDone={refreshUnread} />}
           {view === "verify" && <VerifyQueueView user={user} />}
           {view === "inventory" && <InventoryView user={user} />}
+          {view === "registry" && <NationalRegistryView user={user} />}
           {view === "suppliers" && user.role !== "technician" && <SuppliersView user={user} />}
           {view === "patients" && <PatientsView user={user} />}
           {view === "guide" && <DrugGuideView />}
@@ -318,7 +324,7 @@ export function AppShell() {
         </main>
 
         <footer className="mt-auto border-t bg-card/60 py-3 text-center text-xs text-muted-foreground">
-          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 4.0
+          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 4.3
         </footer>
       </div>
     </div>

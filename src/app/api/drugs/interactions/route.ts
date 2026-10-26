@@ -9,6 +9,7 @@ import {
   EVIDENCE_LABEL,
   ONSET_LABEL,
   duplicateTherapyGroups,
+  type InteractionSeverity,
 } from "@/lib/clinical";
 
 /**
@@ -96,14 +97,14 @@ export async function POST(request: NextRequest) {
     for (const h of hits)
       bySeverity[h.severity as keyof typeof bySeverity]++;
 
-    const highest =
+    const highest: InteractionSeverity | null =
       hits.length > 0
         ? hits.reduce((acc, h) =>
             SEVERITY_RANK[h.severity as keyof typeof SEVERITY_RANK] >
             SEVERITY_RANK[acc.severity as keyof typeof SEVERITY_RANK]
               ? h
               : acc
-          ).severity
+          ).severity as InteractionSeverity
         : null;
 
     return ok({

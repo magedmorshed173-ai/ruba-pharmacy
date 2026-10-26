@@ -18,7 +18,8 @@ import { PrismaClient } from "@prisma/client";
 import { config } from "dotenv";
 
 // v4.2 — فرض قيم .env (Neon) فوق متغيرات البيئة العامة القديمة
-config({ override: true, quiet: true });
+// v4.3 — حارس عزل E2E: DOTENV_KEEP_ENV=1 يعطّل التجاوز (القاعدة المفروضة من الحاضنة تبقى)
+config({ override: process.env.DOTENV_KEEP_ENV !== "1", quiet: true });
 import { DRUGS_A, type DrugSeed } from "./drug-catalog-a";
 import { DRUGS_B } from "./drug-catalog-b";
 import {
@@ -125,8 +126,16 @@ async function main() {
     };
     await db.nationalDrug.upsert({
       where: { registrationNo: s.registrationNo },
-      create: { registrationNo: s.registrationNo, ...data },
-      update: data,
+      create: {
+        registrationNo: s.registrationNo,
+        ...data,
+        // المخطط يمنع null — الكتالوج يجعل المصنّع إلزامياً لكن الحارس يبقى
+        manufacturer: s.manufacturer ?? "غير محدد",
+      },
+      update: {
+        ...data,
+        manufacturer: s.manufacturer ?? "غير محدد",
+      },
     });
   }
   console.log(`📜 السجل المرخص: ${seeds.length} ترخيصاً مستورداً (نمط SFDA)`);

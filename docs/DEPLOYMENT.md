@@ -65,6 +65,19 @@ docker exec ruba-pharmacy cat /app/db/custom.db | gzip > backup-$(date +%F).db.g
 - فروع قواعد بيانات (branching): نسخة تجريبية معزولة لكل ترقية قبل تطبيقها
 - استرجاع نقطة زمنية (PITR) — أقوى من نسخ ملف SQLite اليدوي
 
+### الاختبارات الحية على فرع مؤقت (v4.3)
+
+جناح E2E يعمل على **فرع Neon مؤقت** تُنشئه الحاضنة وتحذفه تلقائياً — عزل
+تام عن قاعدة الإنتاج مع باريتي كامل مع المخطط الفعلي:
+
+```bash
+bun run build && bun run test:e2e   # يتطلب NEON_API_KEY في .env
+```
+
+- بديل يدوي بلا مفتاح: `E2E_DATABASE_URL` (+ `E2E_DIRECT_URL`) لقاعدة Postgres جاهزة
+- في CI: أضف أسرار الريبو `NEON_API_KEY` + `NEON_PROJECT_ID` + `NEON_PARENT_DATABASE_URL` — وبدونها تتخطى الخطوة بلطف
+- تنظيف فروع الاختبار اليتيمة إن وجدت: `bun scripts/neon-clean-branches.ts`
+
 ### للمطورين المحليين (اختياري)
 
 بديل SQLite ما يزال مدعوماً للتطوير دون اتصال: احذف `DIRECT_URL` واجعل `DATABASE_URL=file:./db/custom.db` مع إعادة provider إلى `sqlite` — لكن التوصية الرسمية الآن Neon حتى محلياً.

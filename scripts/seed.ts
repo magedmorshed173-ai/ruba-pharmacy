@@ -7,7 +7,8 @@ import { PrismaClient } from "@prisma/client";
 import { config } from "dotenv";
 
 // v4.2 — فرض قيم .env (Neon) فوق متغيرات البيئة العامة القديمة
-config({ override: true, quiet: true });
+// v4.3 — حارس عزل E2E: DOTENV_KEEP_ENV=1 يعطّل التجاوز (القاعدة المفروضة من الحاضنة تبقى)
+config({ override: process.env.DOTENV_KEEP_ENV !== "1", quiet: true });
 import { INTERACTIONS } from "./clinical-interactions";
 import bcrypt from "bcryptjs";
 
