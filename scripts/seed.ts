@@ -3,6 +3,11 @@
  * التشغيل: bun scripts/seed.ts
  */
 import { PrismaClient } from "@prisma/client";
+
+import { config } from "dotenv";
+
+// v4.2 — فرض قيم .env (Neon) فوق متغيرات البيئة العامة القديمة
+config({ override: true, quiet: true });
 import { INTERACTIONS } from "./clinical-interactions";
 import bcrypt from "bcryptjs";
 

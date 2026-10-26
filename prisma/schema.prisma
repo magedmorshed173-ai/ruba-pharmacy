@@ -1,15 +1,18 @@
-// ربي فارمسي — Ruba Pharmacy Platform v3.0 (Web)
-// ملاحظة هندسية: SQLite لا يدعم Decimal في Prisma، لذا تُخزَّن النقود
-// كأعداد صحيحة بالهللات (1 ريال = 100 هللة) — المعيار العالمي للدقة المالية.
+// ربي فارمسي — Ruba Pharmacy Platform v4.2 (Web)
+// ملاحظة هندسية: تُخزَّن النقود كأعداد صحيحة بالهللات (1 ريال = 100 هللة)
+// — المعيار العالمي للدقة المالية (نمط Stripe).
 // الكميات تُخزَّن كأعداد صحيحة (وحدات) — يوحِّد عدم اتساق v2.0 (Decimal مقابل Int).
+// v4.2: القاعدة السحابية Neon Postgres — المجمّعة للتشغيل (DATABASE_URL)
+// والمباشرة للترحيلات (DIRECT_URL) — النمط الموصى به من Neon+Prisma.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ───────────────────────── المستخدمون والأدوار ─────────────────────────

@@ -41,18 +41,33 @@ docker exec ruba-pharmacy cat /app/db/custom.db | gzip > backup-$(date +%F).db.g
 ```
 كذلك نوفر نسخاً احتياطياً JSON من داخل المنصة: الإعدادات ← النسخ الاحتياطي.
 
-## المسار 3 — PostgreSQL (للتشغيل الواسع / سحابي)
+## المسار 3 — Neon Postgres (v4.2 — الموصى به، مُطبّق في هذا المستودع)
 
-1. أنشئ قاعدة (مثال Neon/Supabase/RDS) وانسخ رابط الاتصال.
-2. عدّل `prisma/schema.prisma`:
-   ```prisma
-   datasource db {
-     provider = "postgresql"
-     url      = env("DATABASE_URL")
-   }
+المشروع رُحّل رسمياً إلى Neon Postgres — المخطط والسكربتات جاهزة:
+
+1. أنشئ مشروعاً في [console.neon.tech](https://console.neon.tech) وانسخ السلسلتين (المجمّعة + المباشرة).
+2. املأ `.env` (انظر `.env.example`):
    ```
-3. `bunx prisma db push && bun run scripts/seed.ts` ثم انشر بالطريقة 1 أو 2.
-4. الصلاحية الوحيدة التي تتغير هي `provider` — كامل الكود محايد تجاه القاعدة.
+   DATABASE_URL="postgresql://USER:PASS@ep-XXXX-pooler.REGION.aws.neon.tech/neondb?sslmode=require"
+   DIRECT_URL="postgresql://USER:PASS@ep-XXXX.REGION.aws.neon.tech/neondb?sslmode=require"
+   ```
+   > المخطط مضبوط مسبقاً على `postgresql` مع `directUrl` — لا تعديل في الكود.
+3. التهيئة الكاملة (مخطط + بذر + سجل مرخص):
+   ```bash
+   bunx prisma db push
+   bun scripts/seed.ts && bun scripts/seed-drugs.ts && bun scripts/seed-national.ts
+   ```
+4. انشر بالطريقة 1 أو 2 مع متغيري البيئة نفسهين.
+
+### مزايا Neon للصيدليات
+
+- تجميد تلقائي للـ compute عند الخمول (توفير تكلفة ساعات الإغلاق)
+- فروع قواعد بيانات (branching): نسخة تجريبية معزولة لكل ترقية قبل تطبيقها
+- استرجاع نقطة زمنية (PITR) — أقوى من نسخ ملف SQLite اليدوي
+
+### للمطورين المحليين (اختياري)
+
+بديل SQLite ما يزال مدعوماً للتطوير دون اتصال: احذف `DIRECT_URL` واجعل `DATABASE_URL=file:./db/custom.db` مع إعادة provider إلى `sqlite` — لكن التوصية الرسمية الآن Neon حتى محلياً.
 
 ## قائمة فحص ما قبل الإنتاج ☑️
 
