@@ -1131,6 +1131,228 @@ async function scenarios(): Promise<void> {
   }
 
 
+  // ───────────────── اختبارات التزامن الحقيقي (سباق فعلي) ─────────────────
+  // كل السيناريوهات السابقة متتالية — وهي تختبر المسار السعيد من حيث التوقيت.
+  // الضمانات الذرية (معاملة Serializable + WAL + busy_timeout + الحجوزات +
+  // قفل الصرف المزدوج) لا تثبت إلا بإطلاق طلبين متزامنين حقيقيين عبر
+  // Promise.all على نفس الدفعة/الوصفة والتأكد من حوافز قاعدة البيانات.
+
+  // S27 — سباق بيعين متزامنين على نفس الدفعة (حارس البيع الزائد)
+  console.log("\n▶ S27: سباق بيعين متزامنين على نفس الدفعة (حارس البيع الزائد)");
+  {
+    const cat = await prisma.category.findFirst();
+    const med = await prisma.medicine.create({
+      data: {
+        name: "E2E دواء سباق البيع",
+        genericName: "race-sale-e2e",
+        categoryId: cat!.id,
+        barcode: "6281001999992",
+        purchasePrice: 100,
+        sellingPrice: 200,
+        quantity: 10,
+        minQuantity: 2,
+        expiryDate: new Date(Date.now() + 200 * 86400000),
+        atcClass: "X99 — اختباري",
+      },
+    });
+    await prisma.batch.create({
+      data: {
+        medicineId: med.id,
+        lotNumber: "E2E-RACE-1",
+        expiryDate: new Date(Date.now() + 200 * 86400000),
+        quantity: 10,
+        unitCost: 100,
+      },
+    });
+
+    // طلبان متزامنان فعلياً: 7 + 7 = 14 من مخزون 10 — استحالة رياضية نجاحهما معاً
+    const [r1, r2] = await Promise.all([
+      req("POST", "/api/sales", {
+        cookie: jar.tech1,
+        json: {
+          items: [{ barcode: "6281001999992", quantity: 7 }],
+          transactionId: "E2E-RACE-A",
+        },
+      }),
+      req("POST", "/api/sales", {
+        cookie: jar.tech1,
+        json: {
+          items: [{ barcode: "6281001999992", quantity: 7 }],
+          transactionId: "E2E-RACE-B",
+        },
+      }),
+    ]);
+    const wins = [r1.status, r2.status].filter((s) => s === 201).length;
+    assert(wins >= 1, "واحد على الأقل من البيعين نجح تحت السباق", `الحالتان: ${r1.status}/${r2.status}`);
+    assert(wins === 1, "نجاح كلاهما مستحيل (7+7 > 10) — حارس البيع الزائد", `نجح ${wins}`);
+
+    // حوافز قاعدة البيانات بعد السباق — هنا يُحكم على الذرية فعلياً
+    const finalMed = await prisma.medicine.findUnique({ where: { id: med.id } });
+    const finalBatch = await prisma.batch.findFirst({ where: { medicineId: med.id } });
+    const soldRows = await prisma.saleItem.findMany({
+      where: { sale: { reference: { in: ["E2E-RACE-A", "E2E-RACE-B"] } } },
+    });
+    const soldTotal = soldRows.reduce((a, x) => a + x.quantity, 0);
+    assert(soldTotal <= 10, `المُباع الكلي لا يتجاوز المخزون (${soldTotal}/10)`);
+    assert(
+      finalMed!.quantity === 10 - soldTotal,
+      `رصيد الدواء = 10 − المُباع (${finalMed!.quantity})`
+    );
+    assert(
+      finalBatch!.quantity === 10 - soldTotal && finalBatch!.quantity >= 0,
+      `رصيد الدفعة متسق وغير سالب (${finalBatch!.quantity})`
+    );
+    const mv = await prisma.stockMovement.aggregate({
+      where: { medicineId: med.id, reference: { in: ["E2E-RACE-A", "E2E-RACE-B"] } },
+      _sum: { delta: true },
+    });
+    assert(mv._sum.delta === -soldTotal, "دفتر الحركات مطابق تماماً للمُباع الفعلي");
+  }
+
+  // S28 — سباق صرف مزدوج متزامن لنفس الوصفة (قفل الحالة الذري)
+  console.log("\n▶ S28: سباق صرفين متزامنين لنفس الوصفة (نقر مزدوج حقيقي)");
+  {
+    const cat = await prisma.category.findFirst();
+    const med = await prisma.medicine.create({
+      data: {
+        name: "E2E دواء سباق الصرف",
+        genericName: "race-dispense-e2e",
+        categoryId: cat!.id,
+        barcode: "6281001999993",
+        purchasePrice: 100,
+        sellingPrice: 300,
+        quantity: 8,
+        minQuantity: 2,
+        expiryDate: new Date(Date.now() + 200 * 86400000),
+        atcClass: "X99 — اختباري",
+      },
+    });
+    await prisma.batch.create({
+      data: {
+        medicineId: med.id,
+        lotNumber: "E2E-RACE-2",
+        expiryDate: new Date(Date.now() + 200 * 86400000),
+        quantity: 8,
+        unitCost: 100,
+      },
+    });
+
+    const fatima = patients.find((p: any) => p.nationalId === "1077234518");
+    const rxCreate = await req("POST", "/api/prescriptions", {
+      cookie: jar.tech1,
+      json: { patientId: fatima?.id, items: [{ medicineId: med.id, quantity: 2 }] },
+    });
+    assert(rxCreate.status === 201, "وصفة السباق في الطابور → 201 (حجز وقائي فوري)", `وصل ${rxCreate.status}`);
+    const rx = rxCreate.body?.prescription;
+    const verify = await req("POST", `/api/prescriptions/${rx.id}/verify`, {
+      cookie: jar.pharmacist,
+      json: { scans: [{ medicineId: med.id, barcode: med.barcode }] },
+    });
+    assert(verify.status === 200, "تحقق الوصفة → 200", `وصل ${verify.status}`);
+
+    // صرفان متزامنان فعليان — المحاكاة الحقيقية لنقرتين مزدوجتين من صيدليين
+    const [d1, d2] = await Promise.all([
+      req("POST", `/api/prescriptions/${rx.id}/dispense`, { cookie: jar.pharmacist, json: {} }),
+      req("POST", `/api/prescriptions/${rx.id}/dispense`, { cookie: jar.pharmacist, json: {} }),
+    ]);
+    const wins = [d1.status, d2.status].filter((s) => s === 201).length;
+    assert(wins === 1, "صرف واحد فقط نجح رغم التزامن", `${d1.status}/${d2.status}`);
+
+    // حوافز: فاتورة واحدة، خصم واحد، تتبع واحد، حجز مستهلك
+    const rxAfter = await prisma.prescription.findUnique({ where: { id: rx.id } });
+    assert(rxAfter?.status === "dispensed", "حالة الوصفة النهائية dispensed");
+    const salesCount = await prisma.sale.count({ where: { reference: `RX-${rx.number}` } });
+    assert(salesCount === 1, "فاتورة RX واحدة فقط رغم الصرفين المتزامنين");
+    const finalMed = await prisma.medicine.findUnique({ where: { id: med.id } });
+    assert(finalMed!.quantity === 6, `المخزون خصم مرة واحدة فقط (8 → ${finalMed!.quantity})`);
+    const trace = await prisma.saleItemBatch.findMany({
+      where: { saleItem: { sale: { reference: `RX-${rx.number}` } } },
+    });
+    assert(
+      trace.reduce((a, x) => a + x.quantity, 0) === 2,
+      "تتبع LOT مسجل مرة واحدة (2 وحدة)"
+    );
+    const resv = await prisma.stockReservation.findFirst({ where: { prescriptionId: rx.id } });
+    assert(resv?.status === "consumed", "الحجز الوقائي → consumed مرة واحدة");
+    const mv = await prisma.stockMovement.aggregate({
+      where: { reference: `RX-${rx.number}` },
+      _sum: { delta: true },
+    });
+    assert(mv._sum.delta === -2, "دفتر الحركات: خصم واحد فقط (−2)");
+  }
+
+  // S29 — سباق بيعين نقديين على وحدات يحميها حجز وقائي
+  console.log("\n▶ S29: سباق بيعين نقديين على مخزون محجوز لوصفة (حماية الوحدات الموعودة)");
+  {
+    const cat = await prisma.category.findFirst();
+    const med = await prisma.medicine.create({
+      data: {
+        name: "E2E دواء سباق الحجز",
+        genericName: "race-reserve-e2e",
+        categoryId: cat!.id,
+        barcode: "6281001999994",
+        purchasePrice: 100,
+        sellingPrice: 150,
+        quantity: 10,
+        minQuantity: 2,
+        expiryDate: new Date(Date.now() + 200 * 86400000),
+        atcClass: "X99 — اختباري",
+      },
+    });
+    await prisma.batch.create({
+      data: {
+        medicineId: med.id,
+        lotNumber: "E2E-RACE-3",
+        expiryDate: new Date(Date.now() + 200 * 86400000),
+        quantity: 10,
+        unitCost: 100,
+      },
+    });
+
+    const khaled = patients.find((p: any) => p.nationalId === "1044558821");
+    const rxCreate = await req("POST", "/api/prescriptions", {
+      cookie: jar.tech1,
+      json: { patientId: khaled?.id, items: [{ medicineId: med.id, quantity: 6 }] },
+    });
+    assert(rxCreate.status === 201, "وصفة 6 وحدات حجزت فوراً (المتاح النقدي = 4)", `وصل ${rxCreate.status}`);
+    const rx = rxCreate.body?.prescription;
+
+    // بيعان متزامنان كل منهما 4 — مجموعهما 8 من متاحٍ لا يتجاوز 4
+    const [s1, s2] = await Promise.all([
+      req("POST", "/api/sales", {
+        cookie: jar.tech1,
+        json: { items: [{ barcode: med.barcode, quantity: 4 }], transactionId: "E2E-RACE-R1" },
+      }),
+      req("POST", "/api/sales", {
+        cookie: jar.tech1,
+        json: { items: [{ barcode: med.barcode, quantity: 4 }], transactionId: "E2E-RACE-R2" },
+      }),
+    ]);
+    const wins = [s1.status, s2.status].filter((s) => s === 201).length;
+    assert(wins >= 1, "واحد على الأقل من البيعين النقديين نجح", `${s1.status}/${s2.status}`);
+    assert(wins <= 1, "نجاح كلاهما يعني اختراق الحجز (4+4 > المتاح 4)", `نجح ${wins}`);
+
+    // حوافز: ما يُباع نقدياً + المحجوز ≤ المخزون دائماً
+    const soldRows = await prisma.saleItem.findMany({
+      where: { sale: { reference: { in: ["E2E-RACE-R1", "E2E-RACE-R2"] } } },
+    });
+    const soldTotal = soldRows.reduce((a, x) => a + x.quantity, 0);
+    assert(soldTotal <= 4, `المُباع النقدي ≤ المتاح غير المحجوز (${soldTotal}/4)`);
+    const finalMed = await prisma.medicine.findUnique({ where: { id: med.id } });
+    const resv = await prisma.stockReservation.findFirst({
+      where: { prescriptionId: rx.id, status: "active" },
+    });
+    assert(resv?.quantity === 6, "حجز الوصفة ما زال نشطاً بست وحدات رغم سباق النقدي");
+    assert(
+      finalMed!.quantity === 10 - soldTotal,
+      `الرصيد النهائي = 10 − المُباع (${finalMed!.quantity})`
+    );
+    assert(
+      finalMed!.quantity >= 6,
+      "الرصيد يغطي المحجوز دائماً — لا اختراق للوحدات الموعودة"
+    );
+  }
+
   console.log("\n▶ S22: الخروج يمحو كوكي الجلسة فوراً");
   {
     const out = await req("POST", "/api/auth/logout", { cookie: jar.tech1 });
