@@ -58,6 +58,9 @@ model Medicine {
   atcCode              String? // تصنيف ATC العالمي (مثل B01AC06) — أساس كشف العلاج المكرر
   atcClass             String? // الفئة العلاجية الوظيفية (مثل مضادات التهاب غير ستيرويدية)
   maxDailyDose         Int? // الحد الأقصى للوحدات/يوم — أساس فحص الجرعة
+  registrationNo       String? // رقم التسجيل في السجل الوطني للدواء
+  registryStatus       String   @default("registered") // registered | suspended | banned | unregistered
+  maxRetailPrice       Int? // سقف السعر البيعي الوطني (هللات) — تجاوزه إنذار تسعيري
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
@@ -66,6 +69,8 @@ model Medicine {
   batches   Batch[]
   poItems   PurchaseOrderItem[]
   prescriptionItems PrescriptionItem[]
+  regulatoryActions RegulatoryAction[]
+  reservations      StockReservation[]
 
   @@index([genericName, dosage])
   @@index([expiryDate])
@@ -86,6 +91,8 @@ model Batch {
   unitCost   Int      @default(0) // هللات — تكلفة الشراء الفعلية للدفعة
   supplier   String? // المورد
   isActive   Boolean  @default(true)
+  isRecalled Boolean   @default(false) // دفعة مسحوبة من التداول — محجوبة عن الصرف نهائياً
+  recalledAt DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -129,6 +136,57 @@ model StockMovement {
 
   @@index([medicineId, createdAt])
   @@index([createdAt])
+}
+
+// السجل الوطني للدواء — الطبقة التنظيمية فوق الطبقة السريرية
+// (نمط SFDA/FDA: تسجيل، تعليق وقائي، حظر، سحب دفعات، سقف تسعيري)
+model RegulatoryAction {
+  id         String   @id @default(cuid())
+  medicineId String
+  medicine   Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  actionType String // suspension | ban | recall | reinstatement | price_cap
+  scope      String   @default("product") // product | lot
+  lotNumber  String? // عند scope = lot
+  reason     String // سبب القرار التنظيمي — إلزامي (التوثيق أساس اليقظة الدوائية)
+  source     String   @default("SFDA") // الجهة المصدرة للقرار
+  value      Int? // هللات — عند actionType = price_cap
+  createdBy  String?
+  isActive   Boolean  @default(true) // يُطفأ بإجراء لاحق (إعادة تسجيل/رفع القرار)
+  createdAt  DateTime @default(now())
+
+  @@index([medicineId, isActive])
+  @@index([createdAt])
+}
+
+// حجز مخزون وقائي لوصفات قيد الطابور (نمط Allocated/Reserved Stock)
+// يمنع نقطة البيع الحرة من بيع وحدات موعودة لوصفة بانتظار التحقق
+model StockReservation {
+  id                 String    @id @default(cuid())
+  prescriptionId     String
+  prescriptionItemId String
+  medicineId         String
+  medicine           Medicine  @relation(fields: [medicineId], references: [id])
+  quantity           Int
+  status             String    @default("active") // active | released | consumed
+  createdAt          DateTime  @default(now())
+  closedAt           DateTime? // لحظة الإفراج أو الاستهلاك
+
+  @@index([medicineId, status])
+  @@index([prescriptionId])
+}
+
+// تتبع دفعات الصرف — أي دفعة (LOT) صُرف منها في أي فاتورة
+// أساس التتبع الأمامي عند سحب دفعة: من أخذ ماذا ومتى (نمط GS1 Track & Trace)
+model SaleItemBatch {
+  id         String   @id @default(cuid())
+  saleItemId String
+  saleItem   SaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  batchId    String
+  lotNumber  String
+  quantity   Int
+
+  @@index([batchId])
+  @@index([saleItemId])
 }
 
 // ───────────────────────── الموردون والمشتريات ─────────────────────────
@@ -226,6 +284,8 @@ model SaleItem {
 
   @@index([saleId])
   @@index([medicineId])
+
+  batches SaleItemBatch[]
 }
 
 // سجل تدقيق الدخول — كل محاولة (نجاح/فشل) مع IP ووكيل المتصفح

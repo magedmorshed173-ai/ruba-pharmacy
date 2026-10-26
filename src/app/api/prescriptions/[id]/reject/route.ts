@@ -1,11 +1,13 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { fail, ok, requireRole } from "@/lib/api-guard";
+import { releasePrescriptionReservations } from "@/lib/reservations";
 
 /**
  * POST /api/prescriptions/[id]/reject — رفض وصفة بسبب موثق (صيدلي فما فوق)
  * الرفض قرار صيدلي مسؤول: الجرعة غير منطقية، الوصفة غير مقروءة،
- * تعارض خطر بدون بديل… السبب إلزامي ويظهر في سجل الطابور.
+ * دواء معلق تنظيمياً، تعارض خطر بدون بديل… السبب إلزامي ويظهر في سجل الطابور.
+ * الرفض يُفرج فوراً عن الحجز الوقائي للمخزون — بنفس الذرية.
  */
 export async function POST(
   request: NextRequest,
@@ -27,15 +29,20 @@ export async function POST(
     if (prescription.status === "rejected")
       return fail("الوصفة مرفوضة مسبقاً", 409);
 
-    const updated = await db.prescription.update({
-      where: { id },
-      data: { status: "rejected", rejectReason: reason },
-      include: { items: true },
+    const updated = await db.$transaction(async (tx) => {
+      const u = await tx.prescription.update({
+        where: { id },
+        data: { status: "rejected", rejectReason: reason },
+        include: { items: true },
+      });
+      const released = await releasePrescriptionReservations(tx, id);
+      return { prescription: u, released };
     });
 
     return ok({
-      prescription: updated,
-      message: `رُفضت الوصفة رقم ${prescription.number} وسُجّل السبب`,
+      prescription: updated.prescription,
+      releasedReservations: updated.released,
+      message: `رُفضت الوصفة رقم ${prescription.number} وسُجّل السبب — أُفرج عن حجز المخزون`,
     });
   } catch {
     return fail("طلب غير صالح", 400);

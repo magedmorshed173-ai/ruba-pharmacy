@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { fail, ok, requireAuth } from "@/lib/api-guard";
 import { toInt } from "@/lib/money";
 import { reviewSaleItems } from "@/lib/sale-engine";
+import { reserveForPrescription, computeAvailable } from "@/lib/reservations";
 
 interface RxItemInput {
   medicineId?: string;
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
       // SQLite أحادي الكاتب — max+1 داخل المعاملة آمن عملياً (نمط أوامر الشراء)
       const last = await tx.prescription.aggregate({ _max: { number: true } });
       const number = (last._max.number ?? 0) + 1;
-      return tx.prescription.create({
+      const created = await tx.prescription.create({
         data: {
           number,
           status: "pending",
@@ -83,6 +84,9 @@ export async function POST(request: NextRequest) {
           },
         },
       });
+      // حجز وقائي فوري: وحدات الوصفة موعودة للوصفة — لا تُباع من نقطة البيع
+      await reserveForPrescription(tx, created.id, created.items);
+      return created;
     });
 
     // مراجعة سريرية فورية تظهر للصيدلي في الطابور (تحذير لا حجب — الحجب عند التحقق والصرف)
@@ -91,9 +95,27 @@ export async function POST(request: NextRequest) {
       patientId
     );
 
+    // المتاح بعد الحجز الفوري = الرصيد − محجوز الوصفات الأخرى
+    const otherReserved = await db.stockReservation.groupBy({
+      by: ["medicineId"],
+      where: {
+        medicineId: { in: preparedItems.map((i) => i.medicineId) },
+        status: "active",
+        prescriptionId: { not: prescription.id },
+      },
+      _sum: { quantity: true },
+    });
+    const reservedMap = new Map(otherReserved.map((r) => [r.medicineId, r._sum.quantity ?? 0]));
     const availability = preparedItems.map((i) => {
       const m = medMap.get(i.medicineId)!;
-      return { medicineId: i.medicineId, available: m.quantity >= i.quantity };
+      const reserved = reservedMap.get(i.medicineId) ?? 0;
+      return {
+        medicineId: i.medicineId,
+        onHand: m.quantity,
+        reservedOther: reserved,
+        available: computeAvailable(m.quantity, reserved),
+        suffices: computeAvailable(m.quantity, reserved) >= i.quantity,
+      };
     });
 
     return ok(
@@ -101,7 +123,7 @@ export async function POST(request: NextRequest) {
         prescription,
         clinicalReview,
         availability,
-        message: `أُدرجت الوصفة رقم ${prescription.number} في طابور التحقق`,
+        message: `أُدرجت الوصفة رقم ${prescription.number} في طابور التحقق — حُجز مخزونها وقائياً`,
       },
       201
     );

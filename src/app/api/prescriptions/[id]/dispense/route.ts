@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { fail, ok, requireRole } from "@/lib/api-guard";
-import { createSale } from "@/lib/sale-engine";
+import { createSale, RegistryBlockError } from "@/lib/sale-engine";
 
 /**
  * POST /api/prescriptions/[id]/dispense — صرف وصفة محققة (صيدلي فما فوق)
@@ -51,6 +51,8 @@ export async function POST(
         customerPhone: null,
         paymentMethod,
         userId: user.id,
+        // حجوزات هذه الوصفة لا تُحسب ضدها — وحداتها موعودة لها أصلاً
+        excludeReservationFor: id,
         withinTx: async (tx, saleId) => {
           // حارس سباق: التحديث فقط إذا كانت الوصفة ما زالت verified —
           // إن سبقنا صرفٌ موازٍ فإن count=0 والمعاملة كلها تتراجع
@@ -59,6 +61,11 @@ export async function POST(
             data: { status: "dispensed", saleId },
           });
           if (flip.count === 0) throw new Error("الوصفة مصروفة مسبقاً");
+          // الحجز الوقائي تحقق فعلياً — يُستهلك بنفس الذرية
+          await tx.stockReservation.updateMany({
+            where: { prescriptionId: id, status: "active" },
+            data: { status: "consumed", closedAt: new Date() },
+          });
         },
       });
 
@@ -81,6 +88,8 @@ export async function POST(
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "تعذر صرف الوصفة";
+      if (e instanceof RegistryBlockError)
+        return fail(msg, 409, { registryBlock: true });
       return fail(msg, msg.includes("مصروفة") ? 409 : 400);
     }
   } catch {

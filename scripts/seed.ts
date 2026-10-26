@@ -257,6 +257,36 @@ const PATIENTS: [string, string, string, string, string][] = [
   ["محمد عمر الزهراني", "1088665512", "0544556677", "losartan, atorvastatin, aspirin", "لاكتوز"],
 ];
 
+
+// ─────── السجل الوطني للدواء (v3.7) ───────
+// حالة تنظيمية افتراضية: مسجل وطنياً برقم تسجيل متسلسل وسقف سعر = سعر البيع
+// الحالات الخاصة فوق نمط SFDA:
+//  - رانيتيدين: معلق تنظيمياً — نمط حالة NDMA الحقيقية (تعليق عالمي 2020)
+//  - أوميغا-3: غير مسجل (مكمل مستورد خارج نطاق التسجيل) — تنبيه غير حاجب
+//  - باراسيتامول: سقف وطني 6.00 ريال أقل من سعر البيع 6.50 — إنذار تسعيري
+const REGISTRY_SPECIAL: Record<
+  string,
+  { registryStatus?: string; unregistered?: true; maxRetailPrice?: number }
+> = {
+  ranitidine: { registryStatus: "suspended" },
+  "omega-3": { registryStatus: "unregistered", unregistered: true },
+  paracetamol: { maxRetailPrice: 600 },
+};
+
+function registryFor(generic: string, index: number, sellingPriceHalalas: number) {
+  const special = REGISTRY_SPECIAL[generic] ?? {};
+  return {
+    registrationNo: special.unregistered ? null : `N-26-${String(1000 + index).slice(-4)}`,
+    registryStatus: special.registryStatus ?? "registered",
+    maxRetailPrice:
+      special.maxRetailPrice !== undefined
+        ? special.maxRetailPrice
+        : special.unregistered
+          ? null
+          : sellingPriceHalalas,
+  };
+}
+
 async function main() {
   console.log("🌱 بدء تعبئة البيانات التجريبية…");
 
@@ -291,15 +321,20 @@ async function main() {
 
   // 3) الأدوية
   const meds: { id: string; barcode: string; name: string; genericName: string; quantity: number }[] = [];
+  let medIndex = 0;
   for (const [name, generic, cat, bc, buy, sell, qty, min, exp, dose, rx, maker] of MEDICINES) {
     const atc = ATC_INFO[generic];
+    const registry = registryFor(generic, medIndex++, Math.round(sell * 100));
     const med = await db.medicine.upsert({
       where: { barcode: bc },
       update: {
-        // مزامنة الحقول السريرية للأدوية الموجودة مسبقاً
+        // مزامنة الحقول السريرية والتنظيمية للأدوية الموجودة مسبقاً
         atcCode: atc?.atcCode ?? undefined,
         atcClass: atc?.atcClass ?? undefined,
         maxDailyDose: atc?.maxDailyDose ?? undefined,
+        registrationNo: registry.registrationNo ?? undefined,
+        registryStatus: registry.registryStatus,
+        maxRetailPrice: registry.maxRetailPrice,
       },
       create: {
         name,
@@ -318,6 +353,9 @@ async function main() {
         atcCode: atc?.atcCode,
         atcClass: atc?.atcClass,
         maxDailyDose: atc?.maxDailyDose,
+        registrationNo: registry.registrationNo,
+        registryStatus: registry.registryStatus,
+        maxRetailPrice: registry.maxRetailPrice,
       },
     });
     meds.push({ id: med.id, barcode: bc, name, genericName: med.genericName, quantity: med.quantity });
@@ -372,6 +410,28 @@ async function main() {
     });
   }
   console.log(`✓ ${INTERACTIONS.length} تداخل دوائي موثق سريرياً`);
+
+  // 4-b) السجل الوطني: الإجراء التنظيمي المعلّق (نمط حالة رانيتيدين/NDMA 2020)
+  const ranitidine = meds.find((m) => m.genericName === "ranitidine");
+  if (ranitidine) {
+    const existingAction = await db.regulatoryAction.findFirst({
+      where: { medicineId: ranitidine.id, actionType: "suspension", isActive: true },
+    });
+    if (!existingAction) {
+      await db.regulatoryAction.create({
+        data: {
+          medicineId: ranitidine.id,
+          actionType: "suspension",
+          scope: "product",
+          reason:
+            "شوائب NDMA فوق الحد اليومي المسموح — تعليق وقائي للتداول حتى إشعار آخر (نمط حالة رانيتيدين التنظيمية 2020: FDA/EMA/الجهات الوطنية)",
+          source: "SFDA",
+          isActive: true,
+        },
+      });
+      console.log("✓ إجراء تنظيمي: تعليق رانيتيدين (نمط NDMA)");
+    }
+  }
 
   // 5) المرضى
   for (const [name, nid, phone, chronic, allergy] of PATIENTS) {

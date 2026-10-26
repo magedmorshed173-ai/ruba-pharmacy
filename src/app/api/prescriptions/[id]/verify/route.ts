@@ -63,6 +63,19 @@ export async function POST(
     const willComplete = prescription.items.every((i) =>
       updates.some((u) => u.itemId === i.id) || i.verified
     );
+
+    // الحجب التنظيمي المطلق (معلق/محظور) — لا يقبل تجاوزاً سريرياً إطلاقاً:
+    // القرار التنظيمي أمر قانوني من الجهة المختصة لا يملك الصيدلي سلطة نقضه —
+    // المخرج الصحيح: رفض الوصفة بسبب موثق (نمط تعليق رانيتيدين 2020)
+    if (review.registryBlocking && willComplete) {
+      const first = review.registryAlerts.find((a) => a.blocking);
+      return fail(
+        first?.message ?? "دواء محجوب تنظيمياً — لا يكتمل التحقق، ارفض الوصفة بسبب موثق",
+        409,
+        { registryBlock: true, clinicalReview: review }
+      );
+    }
+
     if (review.blocking && willComplete && !clinicalOverride) {
       return fail(
         "تعارض سريري خطر في الوصفة — يلزم تأكيد تجاوز مسؤول مسجّل للاكتمال",

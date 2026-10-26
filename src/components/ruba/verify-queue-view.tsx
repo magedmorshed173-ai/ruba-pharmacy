@@ -28,6 +28,7 @@ import {
   Ban,
   CheckCircle2,
   ClipboardCheck,
+  Landmark,
   Loader2,
   Plus,
   ShieldAlert,
@@ -121,13 +122,18 @@ function ClinicalReviewCard({ review }: { review: ClinicalReview }) {
   const clean =
     review.interactions.length === 0 &&
     review.allergyAlerts.length === 0 &&
-    review.duplicateTherapies.length === 0;
+    review.duplicateTherapies.length === 0 &&
+    (review.registryAlerts?.length ?? 0) === 0;
   return (
     <div className="rounded-xl border p-3 space-y-2">
       <div className="flex items-center gap-2 text-sm font-bold">
         <Stethoscope className="size-4 text-teal-600" />
         المراجعة السريرية الحية
-        {review.blocking ? (
+        {review.registryBlocking ? (
+          <Badge className="border-rose-500 bg-rose-600 text-white">
+            <Landmark className="size-3" /> حجب تنظيمي — بلا تجاوز
+          </Badge>
+        ) : review.blocking ? (
           <Badge className="border-rose-400 bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400">
             <ShieldAlert className="size-3" /> حاجبة
           </Badge>
@@ -177,6 +183,21 @@ function ClinicalReviewCard({ review }: { review: ClinicalReview }) {
           className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-500/10 p-2 text-[13px] text-amber-700 dark:text-amber-400"
         >
           تكرار علاجي ({d.atcClass ?? d.family}): {d.members.join("، ")}
+        </div>
+      ))}
+      {(review.registryAlerts ?? []).map((a, i) => (
+        <div
+          key={`r${i}`}
+          className={
+            a.blocking
+              ? "rounded-lg border border-rose-400 bg-rose-600/10 p-2 text-[13px] font-bold text-rose-700 dark:text-rose-400"
+              : "rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-500/10 p-2 text-[13px] text-amber-700 dark:text-amber-400"
+          }
+        >
+          <span className="inline-flex items-center gap-1">
+            <Landmark className="size-3" /> السجل الوطني:
+          </span>{" "}
+          {a.message}
         </div>
       ))}
     </div>

@@ -377,6 +377,14 @@ export function InventoryView({ user }: { user: AuthUser }) {
                       <TableCell className="text-center">
                         <div className="flex flex-col items-center gap-1">
                           <span className="num text-sm font-bold">{m.quantity}</span>
+                          {m.reservedQty ? (
+                            <span
+                              className="text-[10px] text-violet-600 dark:text-violet-400"
+                              title={`المتاح للبيع: ${m.availableQuantity ?? 0}`}
+                            >
+                              محجوز {m.reservedQty}
+                            </span>
+                          ) : null}
                           <StockBadge quantity={m.quantity} minQuantity={m.minQuantity} />
                         </div>
                       </TableCell>
@@ -723,6 +731,7 @@ export function InventoryView({ user }: { user: AuthUser }) {
       <BatchesDialog
         medicine={batchesTarget ? { id: batchesTarget.id, name: batchesTarget.name, quantity: batchesTarget.quantity } : null}
         canManage={canManage}
+        canRecall={user.role === "admin"}
         onClose={() => setBatchesTarget(null)}
         onChanged={() => load()}
       />

@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
   if (filter === "active30") where.expiryDate = { gt: now, lte: in30 };
 
   try {
-    const [total, medicines] = await Promise.all([
+    const [total, medicines, reservedRows] = await Promise.all([
       db.medicine.count({ where }),
       db.medicine.findMany({
         where,
@@ -43,17 +43,30 @@ export async function GET(request: NextRequest) {
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
+      // المحجوز لوصفات قيد الطابور — أساس «المتاح للبيع» الفعلي
+      db.stockReservation.groupBy({
+        by: ["medicineId"],
+        where: { status: "active" },
+        _sum: { quantity: true },
+      }),
     ]);
 
+    const reservedMap = new Map(reservedRows.map((r) => [r.medicineId, r._sum.quantity ?? 0]));
+
     const today = now.toISOString().slice(0, 10);
-    const results = medicines.map((m) => ({
-      ...m,
-      isExpired: m.expiryDate.toISOString().slice(0, 10) <= today,
-      daysUntilExpiry: Math.ceil(
-        (m.expiryDate.getTime() - now.getTime()) / 86400000
-      ),
-      isLowStock: m.quantity <= m.minQuantity,
-    }));
+    const results = medicines.map((m) => {
+      const reserved = reservedMap.get(m.id) ?? 0;
+      return {
+        ...m,
+        isExpired: m.expiryDate.toISOString().slice(0, 10) <= today,
+        daysUntilExpiry: Math.ceil(
+          (m.expiryDate.getTime() - now.getTime()) / 86400000
+        ),
+        isLowStock: m.quantity <= m.minQuantity,
+        reservedQty: reserved,
+        availableQuantity: Math.max(0, m.quantity - reserved),
+      };
+    });
 
     return ok({ total, page, pageSize, results });
   } catch {

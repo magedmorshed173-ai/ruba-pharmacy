@@ -34,6 +34,12 @@ export interface Medicine {
   isExpired?: boolean;
   daysUntilExpiry?: number;
   isLowStock?: boolean;
+  // السجل الوطني + المحجوزات — v3.7
+  registrationNo?: string | null;
+  registryStatus?: "registered" | "suspended" | "banned" | "unregistered";
+  maxRetailPrice?: number | null;
+  reservedQty?: number;
+  availableQuantity?: number;
 }
 
 export interface StockMovement {

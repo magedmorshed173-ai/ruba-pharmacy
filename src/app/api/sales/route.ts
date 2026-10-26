@@ -7,6 +7,7 @@ import {
   createSale,
   parseSaleItems,
   reviewSaleItems,
+  RegistryBlockError,
   type SaleItemInput,
 } from "@/lib/sale-engine";
 
@@ -49,6 +50,16 @@ export async function POST(request: NextRequest) {
 
     // مراجعة سريعة للحجب قبل الدخول في المعاملة (المحرك يعيد الفحص داخلياً)
     const preReview = await reviewSaleItems(items as SaleItemInput[], patientId);
+
+    // الحجب التنظيمي المطلق (معلق/محظور) — لا تجاوز له لأي دور
+    if (preReview.registryBlocking) {
+      const first = preReview.registryAlerts.find((a) => a.blocking);
+      return fail(first?.message ?? "دواء محجوب تنظيمياً من السجل الوطني", 409, {
+        registryBlock: true,
+        clinicalReview: preReview,
+      });
+    }
+
     if (preReview.blocking) {
       if (user.role === "technician") {
         return fail(
@@ -110,6 +121,8 @@ export async function POST(request: NextRequest) {
         const dup = await db.sale.findUnique({ where: { reference } });
         return ok({ duplicated: true, saleId: dup?.id, reference, message: "عملية مكررة" });
       }
+      if (e instanceof RegistryBlockError)
+        return fail(e.message, 409, { registryBlock: true });
       const msg = e instanceof Error ? e.message : "تعذر إتمام البيع";
       return fail(msg);
     }

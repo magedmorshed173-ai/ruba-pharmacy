@@ -17,6 +17,19 @@ import {
   reviewCartClinical,
   type ClinicalReview,
 } from "@/lib/clinical-review";
+import { isRegistryHardBlock } from "@/lib/registry";
+import {
+  assertAvailable,
+  mapActiveReservations,
+} from "@/lib/reservations";
+
+/** خطأ حجب تنظيمي — تُحوّله المسارات إلى 409 مع علم registryBlock */
+export class RegistryBlockError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RegistryBlockError";
+  }
+}
 
 export interface SaleItemInput {
   barcode?: string;
@@ -29,13 +42,17 @@ export interface CreateSaleParams {
   /** معرف فريد للعملية — التكرار محجوب بقيد قاعدة البيانات */
   reference: string;
   patientId: string | null;
-  /** تجاوز مسؤول — يُسجل على الفاتورة للمراجعة */
+  /** تجاوز مسؤول — يُسجل على الفاتورة للمراجعة (سريري فقط — التنظيمي بلا تجاوز) */
   clinicalOverride: boolean;
   discount: number; // هللات
   customerName: string;
   customerPhone: string | null;
   paymentMethod: string; // cash | card | insurance
   userId: string;
+  /**
+   * صرف وصفة؟ حجوزات هذه الوصفة لا تُحسب ضدها (وحداتها موعودة لها أصلاً)
+   */
+  excludeReservationFor?: string;
   /**
    * خطاف داخل المعاملة قبل الالتزام — يربط أثراً إضافياً بنفس الذرية
    * (مثال: تحويل حالة الوصفة إلى dispensed مع ربط saleId)
@@ -60,7 +77,16 @@ export async function reviewSaleItems(
   );
   const reviewMeds = await db.medicine.findMany({
     where: { OR: reviewKeys, isActive: true },
-    select: { id: true, name: true, genericName: true, atcClass: true },
+    select: {
+      id: true,
+      name: true,
+      genericName: true,
+      atcClass: true,
+      registryStatus: true,
+      registrationNo: true,
+      sellingPrice: true,
+      maxRetailPrice: true,
+    },
   });
   return reviewCartClinical(reviewMeds, patientId ?? undefined);
 }
@@ -77,8 +103,14 @@ export function parseSaleItems(raw: unknown): SaleItemInput[] | null {
  * أو خصم أكبر من الإجمالي أو بنود غير صحيحة — المستدعي يحوّلها لاستجابة.
  */
 export async function createSale(params: CreateSaleParams): Promise<SaleResult> {
-  // ── المراجعة السريرية الشاملة (خارج المعاملة — قراءة فقط) ──
+  // ── المراجعة السريرية والتنظيمية الشاملة (خارج المعاملة — قراءة فقط) ──
   const clinicalReview = await reviewSaleItems(params.items, params.patientId);
+
+  // الحجب التنظيمي المطلق (معلق/محظور) — لا تجاوز له حتى للصيدلي
+  if (clinicalReview.registryBlocking) {
+    const first = clinicalReview.registryAlerts.find((a) => a.blocking);
+    throw new RegistryBlockError(first?.message ?? "دواء محجوب تنظيمياً");
+  }
 
   const discount = Math.max(0, toInt(params.discount ?? 0));
   const today = new Date();
@@ -97,6 +129,21 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
       const medMap = new Map(meds.map((m) => [m.barcode, m]));
       const idMap = new Map(meds.map((m) => [m.id, m]));
 
+      // حجب تنظيمي حارس سباق: الحالة قد تغيّر بين المراجعة والمعاملة
+      for (const med of meds) {
+        if (isRegistryHardBlock(med.registryStatus))
+          throw new RegistryBlockError(
+            `«${med.name}» محجوب تنظيمياً من السجل الوطني — لا يُصرف`
+          );
+      }
+
+      // المحجوز للوصفات الأخرى قيد الطابور — حماية الوحدات الموعودة
+      const reservedMap = await mapActiveReservations(
+        tx,
+        meds.map((m) => m.id),
+        params.excludeReservationFor
+      );
+
       let total = 0;
       const prepared: {
         medicineId: string;
@@ -106,6 +153,7 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
         subtotal: number;
         costHalalas: number; // لقطة تكلفة الدفعات المخصومة فعلياً (FEFO)
         newQty: number;
+        batchAllocations: { batchId: string; lotNumber: string; quantity: number }[];
       }[] = [];
       const batchDeductions: { batchId: string; newBatchQty: number }[] = [];
 
@@ -117,27 +165,56 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
           ? medMap.get(String(item.barcode).trim())
           : idMap.get(String(item.medicineId));
         if (!med) throw new Error("دواء غير موجود في السلة");
-        if (med.quantity < qty)
-          throw new Error(`مخزون غير كافٍ: ${med.name} (المتوفر ${med.quantity})`);
 
-        // ── FEFO: الخصم من الدفعات الأقرب انتهاءً، وتجاهل المنتهية ──
+        // المتاح = الرصيد − المحجوز لوصفات أخرى (الحجز يسبق فحص الرصيد الخام)
+        assertAvailable(
+          med.name,
+          qty,
+          med.quantity,
+          reservedMap.get(med.id) ?? 0
+        );
+
+        // ── FEFO: الخصم من الدفعات الأقرب انتهاءً، تجاهل المنتهية والمسحوبة ──
         const batches = await tx.batch.findMany({
-          where: { medicineId: med.id, isActive: true, quantity: { gt: 0 } },
+          where: {
+            medicineId: med.id,
+            isActive: true,
+            isRecalled: false,
+            quantity: { gt: 0 },
+          },
           orderBy: { expiryDate: "asc" },
         });
         const { allocations, shortfall } = allocateFefo(batches, qty, today);
         if (shortfall > 0) {
           const sellable = allocations.reduce((a, x) => a + x.quantity, 0);
+          if (sellable === 0) {
+            // تمييز سبب النضوب: دفعات مسحوبة تنظيمياً ≠ دفعات منتهية الصلاحية
+            const recalledStock = await tx.batch.aggregate({
+              where: {
+                medicineId: med.id,
+                isActive: true,
+                isRecalled: true,
+                quantity: { gt: 0 },
+              },
+              _sum: { quantity: true },
+            });
+            if ((recalledStock._sum.quantity ?? 0) > 0)
+              throw new Error(
+                `لا يوجد مخزون صالح للصرف: ${med.name} (كل الدفعات المتاحة مسحوبة من التداول بقرار تنظيمي)`
+              );
+            throw new Error(
+              `لا يوجد مخزون صالح الصلاحية: ${med.name} (كل الدفعات منتهية)`
+            );
+          }
           throw new Error(
-            sellable === 0
-              ? `لا يوجد مخزون صالح الصلاحية: ${med.name} (كل الدفعات منتهية)`
-              : `المتوفر الصالح أقل من المطلوب: ${med.name} (الصالح ${sellable})`
+            `المتوفر الصالح أقل من المطلوب: ${med.name} (الصالح ${sellable})`
           );
         }
 
         const subtotal = med.sellingPrice * qty; // أعداد صحيحة — دقة مطلقة
         total += subtotal;
         let itemCost = 0;
+        const itemAllocations: { batchId: string; lotNumber: string; quantity: number }[] = [];
         prepared.push({
           medicineId: med.id,
           medicineName: med.name,
@@ -146,10 +223,16 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
           subtotal,
           costHalalas: 0,
           newQty: med.quantity - qty,
+          batchAllocations: itemAllocations,
         });
         for (const a of allocations) {
           const srcBatch = batches.find((b) => b.id === a.batchId)!;
           itemCost += a.quantity * srcBatch.unitCost; // التكلفة الفعلية للدفعة
+          itemAllocations.push({
+            batchId: a.batchId,
+            lotNumber: a.lotNumber,
+            quantity: a.quantity,
+          });
           batchDeductions.push({
             batchId: a.batchId,
             newBatchQty: srcBatch.quantity - a.quantity,
@@ -186,7 +269,25 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
             })),
           },
         },
+        include: { items: { select: { id: true } } },
       });
+
+      // تتبع دفعات الصرف — أي LOT صُرف منه في أي فاتورة
+      // (أساس التتبع الأمامي عند سحب دفعة — نمط GS1 Track & Trace)
+      const itemIds = created.items.map((i) => i.id);
+      for (let idx = 0; idx < prepared.length; idx++) {
+        const allocs = prepared[idx].batchAllocations;
+        for (const a of allocs) {
+          await tx.saleItemBatch.create({
+            data: {
+              saleItemId: itemIds[idx],
+              batchId: a.batchId,
+              lotNumber: a.lotNumber,
+              quantity: a.quantity,
+            },
+          });
+        }
+      }
 
       for (const p of prepared) {
         await tx.medicine.update({
@@ -214,13 +315,18 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
       // مزامنة «أقرب صلاحية» على مستوى الدواء مع الدفعات المتبقية
       for (const p of prepared) {
         const nearest = await tx.batch.findFirst({
-          where: { medicineId: p.medicineId, isActive: true, quantity: { gt: 0 } },
+          where: {
+            medicineId: p.medicineId,
+            isActive: true,
+            isRecalled: false,
+            quantity: { gt: 0 },
+          },
           orderBy: { expiryDate: "asc" },
         });
         await tx.medicine.update({
           where: { id: p.medicineId },
           data: {
-            expiryDate: nearest ? nearest.expiryDate : new Date(0), // لا مخزون متبقٍّ
+            expiryDate: nearest ? nearest.expiryDate : new Date(0), // لا مخزون متبقٍّ قابل للصرف
           },
         });
       }

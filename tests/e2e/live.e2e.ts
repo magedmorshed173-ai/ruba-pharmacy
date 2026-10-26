@@ -740,6 +740,397 @@ async function scenarios(): Promise<void> {
     assert(verifyDispensed.status === 409, "تحقق وصفة مصروفة مرفوض (409)");
   }
 
+
+  // S24 — السجل الوطني للدواء: تعليق تنظيمي يحجب الصرف بلا تجاوز
+  console.log("\n▶ S24: السجل الوطني (تعليق رانيتيدين/NDMA + غير مسجل + سقف سعر)");
+  {
+    const abdullah = patients.find((p: any) => p.nationalId === "1098447213");
+    // قراءة السجل: الحالات مزروعة
+    const reg = await req("GET", "/api/registry", { cookie: jar.admin });
+    assert(reg.status === 200, "GET السجل الوطني → 200");
+    const regMeds: any[] = reg.body?.medicines ?? [];
+    const rani = regMeds.find((m) => m.genericName === "ranitidine");
+    const omega = regMeds.find((m) => m.genericName === "omega-3");
+    assert(rani?.registryStatus === "suspended", "رانيتيدين: معلق تنظيمياً في السجل");
+    assert(omega?.registryStatus === "unregistered", "أوميغا-3: غير مسجل في السجل");
+    assert(
+      regMeds.filter((m) => m.registrationNo).length >= 28,
+      `أرقام تسجيل وطنية على ≥ 28 دواء (${regMeds.filter((m) => m.registrationNo).length})`
+    );
+    assert((reg.body?.actions ?? []).length >= 1, "إجراء تنظيمي نشط معروض في السجل");
+
+    // بيع رانيتيدين: محجوب تنظيمياً — للصيدلي حتى مع clinicalOverride
+    const raniBarcode = barcodeOf("ranitidine");
+    const blockSale = await req("POST", "/api/sales", {
+      cookie: jar.pharmacist,
+      json: { items: [{ barcode: raniBarcode, quantity: 1 }], transactionId: "E2E-REG-1" },
+    });
+    assert(blockSale.status === 409, "بيع معلق تنظيمياً → 409", `وصل ${blockSale.status}`);
+    assert(blockSale.body?.registryBlock === true, "علم registryBlock مرفوع");
+
+    const overrideSale = await req("POST", "/api/sales", {
+      cookie: jar.pharmacist,
+      json: {
+        items: [{ barcode: raniBarcode, quantity: 1 }],
+        transactionId: "E2E-REG-2",
+        clinicalOverride: true,
+      },
+    });
+    assert(
+      overrideSale.status === 409,
+      "التجاوز السريري لا يُنقض الحجب التنظيمي → 409",
+      `وصل ${overrideSale.status}`
+    );
+
+    // السجل الوطني غير متاح بلا جلسة
+    const regAnon = await req("GET", "/api/registry");
+    assert(regAnon.status === 401, "GET السجل بلا جلسة → 401");
+
+    // غير مسجل: تحذير لا حجب — البيع يتم مع تنبيه
+    const omegaSale = await req("POST", "/api/sales", {
+      cookie: jar.pharmacist,
+      json: { items: [{ barcode: barcodeOf("omega-3"), quantity: 1 }], transactionId: "E2E-REG-3" },
+    });
+    assert(omegaSale.status === 201, "بيع دواء غير مسجل → 201 (تحذير لا حجب)", `وصل ${omegaSale.status}`);
+    assert(
+      (omegaSale.body?.clinicalReview?.registryAlerts ?? []).some(
+        (a: any) => a.kind === "unregistered" && a.blocking === false
+      ),
+      "تنبيه unregistered غير حاجب في استجابة البيع"
+    );
+
+    // سقف السعر: إنذار تسعيري غير حاجب (باراسيتامول 6.50 فوق سقف 6.00)
+    const paraSale = await req("POST", "/api/sales", {
+      cookie: jar.admin,
+      json: { items: [{ barcode: barcodeOf("paracetamol"), quantity: 1 }], transactionId: "E2E-REG-4" },
+    });
+    assert(paraSale.status === 201, "بيع فوق السقف الوطني → 201 (إنذار لا حجب)", `وصل ${paraSale.status}`);
+    assert(
+      (paraSale.body?.clinicalReview?.registryAlerts ?? []).some((a: any) => a.kind === "price_cap"),
+      "إنذار تجاوز سقف السعر في استجابة البيع"
+    );
+
+    // دورة قرار تنظيمية كاملة: تعليق → حجب → رفع القرار → صرف طبيعي
+    const ceti = medicineRows.find((m: any) => m.genericName === "cetirizine");
+    const techDecision = await req("POST", "/api/registry", {
+      cookie: jar.tech1,
+      json: { medicineId: ceti.id, actionType: "suspension", reason: "x" },
+    });
+    assert(techDecision.status === 403, "الفني لا يصدر قرارات تنظيمية (403)");
+
+    const noReason = await req("POST", "/api/registry", {
+      cookie: jar.admin,
+      json: { medicineId: ceti.id, actionType: "suspension", reason: "" },
+    });
+    assert(noReason.status === 400, "قرار تنظيمي بلا سبب → 400");
+
+    const suspend = await req("POST", "/api/registry", {
+      cookie: jar.admin,
+      json: {
+        medicineId: ceti.id,
+        actionType: "suspension",
+        reason: "اختبار E2E: تعليق وقائي لدفعة معيبة مزعومة",
+        source: "SFDA",
+      },
+    });
+    assert(suspend.status === 201, "إصدار تعليق تنظيمي → 201", `وصل ${suspend.status}`);
+
+    const cetiBlocked = await req("POST", "/api/sales", {
+      cookie: jar.admin,
+      json: { items: [{ barcode: ceti.barcode, quantity: 1 }], transactionId: "E2E-REG-5" },
+    });
+    assert(cetiBlocked.status === 409, "بيع الدواء المعلق حديثاً → 409 فوراً");
+
+    const reinstate = await req("POST", "/api/registry", {
+      cookie: jar.admin,
+      json: {
+        medicineId: ceti.id,
+        actionType: "reinstatement",
+        reason: "اختبار E2E: فشل التحقق المخبري في إثبات العيب — رفع التعليق",
+        source: "SFDA",
+      },
+    });
+    assert(reinstate.status === 201, "رفع القرار (إعادة تسجيل) → 201");
+
+    const cetiOk = await req("POST", "/api/sales", {
+      cookie: jar.admin,
+      json: { items: [{ barcode: ceti.barcode, quantity: 1 }], transactionId: "E2E-REG-6" },
+    });
+    assert(cetiOk.status === 201, "بعد رفع القرار البيع يتم طبيعياً → 201", `وصل ${cetiOk.status}`);
+
+    // طابور التحقق: وصفة ب دواء معلق — التحقق لا يكتمل، والمخرج الصحيح رفض موثق
+    const rxSuspended = await req("POST", "/api/prescriptions", {
+      cookie: jar.tech1,
+      json: {
+        patientId: abdullah?.id,
+        items: [{ medicineId: rani?.id ?? medicineRows.find((m: any) => m.genericName === "ranitidine")?.id, quantity: 1 }],
+      },
+    });
+    assert(rxSuspended.status === 201, "إدخال وصفة بدواء معلق مسموح (تنبيه لا حجب عند الإدخال)");
+    const rxSusp = rxSuspended.body?.prescription;
+    const verifySuspended = await req("POST", `/api/prescriptions/${rxSusp.id}/verify`, {
+      cookie: jar.pharmacist,
+      json: {
+        scans: [
+          {
+            medicineId: rxSusp.items[0].medicineId,
+            barcode: rxSusp.items[0].medicine.barcode,
+          },
+        ],
+      },
+    });
+    assert(verifySuspended.status === 409, "تحقق وصفة بدواء معلق → 409", `وصل ${verifySuspended.status}`);
+    assert(verifySuspended.body?.registryBlock === true, "علم registryBlock في التحقق");
+    const rejectSuspended = await req("POST", `/api/prescriptions/${rxSusp.id}/reject`, {
+      cookie: jar.pharmacist,
+      json: { reason: "الدواء معلق تنظيمياً (NDMA) — عاد للطبيب لبحث البديل" },
+    });
+    assert(rejectSuspended.status === 200, "رفض موثق للوصفة المعلقة تنظيمياً → 200");
+    assert(
+      (rejectSuspended.body?.releasedReservations ?? 0) >= 1,
+      "الرفض أفرج عن حجز المخزون"
+    );
+  }
+
+  // S25 — المحجوزات: وصفة قيد الطابور تحمي وحداتها من نقطة البيع
+  console.log("\n▶ S25: المحجوزات الوقائية (حجز → حماية → استهلاك/إفراج)");
+  {
+    const abdullah = patients.find((p: any) => p.nationalId === "1098447213");
+    const fatima = patients.find((p: any) => p.nationalId === "1077234518");
+    const medList = await req("GET", "/api/medicines?pageSize=100", { cookie: jar.admin });
+    const rows: any[] = medList.body?.results ?? [];
+    const diclo = rows.find((m) => m.genericName === "diclofenac");
+    const para = rows.find((m) => m.genericName === "paracetamol");
+    assert(
+      typeof diclo?.availableQuantity === "number" && diclo.availableQuantity === diclo.quantity,
+      "الحقل availableQuantity ظاهر ويساوي الرصيد بلا حجوزات"
+    );
+
+    // وصفة تستهلك كل مخزون الديكلوفيناك — تُحجز فوراً
+    const rxAll = await req("POST", "/api/prescriptions", {
+      cookie: jar.tech1,
+      json: {
+        patientId: fatima?.id,
+        items: [{ medicineId: diclo.id, quantity: diclo.quantity }],
+      },
+    });
+    assert(rxAll.status === 201, "إدخال وصفة لمخزون كامل → 201", `وصل ${rxAll.status}`);
+    const rxAllId = rxAll.body?.prescription?.id;
+
+    const activeRes = await prisma.stockReservation.findMany({
+      where: { prescriptionId: rxAllId, status: "active" },
+    });
+    assert(
+      activeRes.length === 1 && activeRes[0].quantity === diclo.quantity,
+      `حجز وقائي نشط بكامل الكمية (${activeRes[0]?.quantity})`
+    );
+
+    const afterReserve = await req("GET", "/api/medicines?pageSize=100", { cookie: jar.admin });
+    const dicloAfter = (afterReserve.body?.results ?? []).find(
+      (m: any) => m.genericName === "diclofenac"
+    );
+    assert(dicloAfter?.availableQuantity === 0, "المتاح للبيع صفر أثناء الحجز");
+    assert(dicloAfter?.reservedQty === diclo.quantity, "المحجوز معروض في قائمة الأدوية");
+    assert(dicloAfter?.quantity === diclo.quantity, "الرصيد الفعلي لم يتغير بالحجز");
+
+    // نقطة البيع محجوبة: الوحدات موعودة للوصفة
+    const posBlocked = await req("POST", "/api/sales", {
+      cookie: jar.pharmacist,
+      json: { items: [{ barcode: diclo.barcode, quantity: 1 }], transactionId: "E2E-RESV-1" },
+    });
+    assert(posBlocked.status === 400, "بيع وحدات محجوزة → 400", `وصل ${posBlocked.status}`);
+    assert(
+      String(posBlocked.body?.error ?? "").includes("محجوز"),
+      "رسالة الرفض توضح أن المخزون محجوز لوصفات"
+    );
+
+    // التحقق ثم الصرف: حجز الوصفة لا يُحسب ضدها
+    const verifyAll = await req("POST", `/api/prescriptions/${rxAllId}/verify`, {
+      cookie: jar.pharmacist,
+      json: {
+        scans: [{ medicineId: diclo.id, barcode: rxAll.body?.prescription?.items?.[0]?.medicine?.barcode }],
+      },
+    });
+    assert(verifyAll.status === 200, "تحقق الوصفة المحجوزة → 200");
+    const dispenseAll = await req("POST", `/api/prescriptions/${rxAllId}/dispense`, {
+      cookie: jar.pharmacist,
+      json: { paymentMethod: "cash" },
+    });
+    assert(dispenseAll.status === 201, "صرف الوصفة المحجوزة → 201 (حجزها لا يمنعها)", `وصل ${dispenseAll.status}`);
+
+    const consumedRes = await prisma.stockReservation.findFirst({
+      where: { prescriptionId: rxAllId },
+    });
+    assert(consumedRes?.status === "consumed", "الحجز تحول إلى consumed بعد الصرف");
+    const dicloFinal = (await req("GET", "/api/medicines?pageSize=100", { cookie: jar.admin }))
+      .body?.results?.find((m: any) => m.genericName === "diclofenac");
+    assert(dicloFinal?.quantity === 0, "مخزون الديكلوفيناك نُفد فعلياً بالصرف");
+
+    // حجز جزئي: وصفة 100 باراسيتامول تحمي 100 وحدة ثم الإفراج بالرفض
+    // (أرقام ديناميكية — السيناريوهات السابقة تعدّل رصيد الباراسيتامول)
+    const rxPara = await req("POST", "/api/prescriptions", {
+      cookie: jar.tech1,
+      json: {
+        patientId: abdullah?.id,
+        items: [{ medicineId: para.id, quantity: 100 }],
+      },
+    });
+    assert(rxPara.status === 201, "وصفة باراسيتامول 100 → 201");
+    const paraAfterReserve = (
+      await req("GET", "/api/medicines?pageSize=100", { cookie: jar.admin })
+    ).body?.results?.find((m: any) => m.genericName === "paracetamol");
+    assert(
+      paraAfterReserve?.availableQuantity === paraAfterReserve?.quantity - 100,
+      `المتاح نقص بمقدار الحجز (${paraAfterReserve?.quantity} − 100 = ${paraAfterReserve?.availableQuantity})`
+    );
+    assert(paraAfterReserve?.reservedQty === 100, "المحجوز المعروض = 100 بالضبط");
+
+    // بيع يفوق المتاح (ولو كان أقل من الرصيد الخام) → محجوب بالحجز
+    const overQty = paraAfterReserve.availableQuantity + 10;
+    const posOver = await req("POST", "/api/sales", {
+      cookie: jar.admin,
+      json: { items: [{ barcode: para.barcode, quantity: overQty }], transactionId: "E2E-RESV-2" },
+    });
+    assert(posOver.status === 400, `بيع ${overQty} فوق المتاح المحجوز → 400`, `وصل ${posOver.status}`);
+    assert(
+      String(posOver.body?.error ?? "").includes("محجوز"),
+      "رسالة الحجب الجزئي توضح المحجوز والمتاح"
+    );
+
+    const rejectPara = await req("POST", `/api/prescriptions/${rxPara.body?.prescription?.id}/reject`, {
+      cookie: jar.pharmacist,
+      json: { reason: "الجرعة غير منطقية — عاد للطبيب" },
+    });
+    assert(rejectPara.status === 200, "رفض وصفة الحجز الجزئي → 200");
+    assert((rejectPara.body?.releasedReservations ?? 0) >= 1, "الإفراج موثق في الاستجابة");
+
+    const posAfterRelease = await req("POST", "/api/sales", {
+      cookie: jar.admin,
+      json: { items: [{ barcode: para.barcode, quantity: overQty }], transactionId: "E2E-RESV-3" },
+    });
+    assert(posAfterRelease.status === 201, "بعد الإفراج نفس البيع ينجح → 201", `وصل ${posAfterRelease.status}`);
+  }
+
+  // S26 — سحب دفعة LOT: خروج فوري من التداول + تتبع أمامي للمرضى
+  console.log("\n▶ S26: سحب دفعة LOT (حجب فوري + تتبع المرضى المتأثرين)");
+  {
+    const aspId = medicineRows.find((m: any) => m.genericName === "aspirin")?.id;
+    const aspBarcode = barcodeOf("aspirin");
+    const batches = await req("GET", `/api/batches?medicineId=${aspId}`, { cookie: jar.admin });
+    const batch = (batches.body?.batches ?? []).find((b: any) => !b.isRecalled && b.quantity > 0);
+    assert(!!batch, `دفعة aspirin موجودة (${batch?.lotNumber} — ${batch?.quantity} وحدة)`);
+
+    // بيع موثق من الدفعة قبل سحبها — أساس التتبع الأمامي
+    const preSale = await req("POST", "/api/sales", {
+      cookie: jar.pharmacist,
+      json: {
+        items: [{ barcode: aspBarcode, quantity: 3 }],
+        transactionId: "E2E-RECALL-SALE",
+        customerName: "عميل تتبع السحب",
+      },
+    });
+    assert(preSale.status === 201, "بيع 3 وحدات من الدفعة قبل سحبها → 201", `وصل ${preSale.status}`);
+
+    const traceRows = await prisma.saleItemBatch.findMany({
+      where: { saleItem: { sale: { reference: "E2E-RECALL-SALE" } } },
+    });
+    assert(
+      traceRows.length === 1 && traceRows[0].lotNumber === batch.lotNumber && traceRows[0].quantity === 3,
+      `تتبع الدفعة مسجل تلقائياً (LOT ${traceRows[0]?.lotNumber} × ${traceRows[0]?.quantity})`
+    );
+
+    // الصلاحيات: الفني لا يسحب؛ السبب إلزامي
+    const techRecall = await req("POST", "/api/registry", {
+      cookie: jar.tech1,
+      json: {
+        medicineId: aspId,
+        actionType: "recall",
+        scope: "lot",
+        lotNumber: batch.lotNumber,
+        reason: "x",
+      },
+    });
+    assert(techRecall.status === 403, "الفني لا يسحب دفعات (403)");
+
+    const noReasonRecall = await req("POST", "/api/registry", {
+      cookie: jar.admin,
+      json: {
+        medicineId: aspId,
+        actionType: "recall",
+        scope: "lot",
+        lotNumber: batch.lotNumber,
+        reason: "",
+      },
+    });
+    assert(noReasonRecall.status === 400, "سحب بلا سبب → 400");
+
+    // قرار السحب
+    const recall = await req("POST", "/api/registry", {
+      cookie: jar.admin,
+      json: {
+        medicineId: aspId,
+        actionType: "recall",
+        scope: "lot",
+        lotNumber: batch.lotNumber,
+        reason: "اختبار E2E: انحراف مواصفات في التشغيلة — سحب وقائي",
+        source: "SFDA",
+      },
+    });
+    assert(recall.status === 201, "قرار سحب الدفعة → 201", `وصل ${recall.status}`);
+    const recalledBatch = await prisma.batch.findUnique({ where: { id: batch.id } });
+    assert(recalledBatch?.isRecalled === true, "الدفعة موسومة isRecalled في قاعدة البيانات");
+
+    const recallAgain = await req("POST", "/api/registry", {
+      cookie: jar.admin,
+      json: {
+        medicineId: aspId,
+        actionType: "recall",
+        scope: "lot",
+        lotNumber: batch.lotNumber,
+        reason: "مكرر",
+      },
+    });
+    assert(recallAgain.status === 409, "سحب دفعة مسحوبة مسبقاً → 409");
+
+    // الصرف محجوب فوراً: كل مخزون aspirin كان في هذه الدفعة
+    const saleBlocked = await req("POST", "/api/sales", {
+      cookie: jar.admin,
+      json: { items: [{ barcode: aspBarcode, quantity: 1 }], transactionId: "E2E-RECALL-2" },
+    });
+    assert(saleBlocked.status === 400, "بيع من دفعة مسحوبة → 400 (نضوب صالح)", `وصل ${saleBlocked.status}`);
+    assert(
+      String(saleBlocked.body?.error ?? "").includes("مسحوبة"),
+      "رسالة النضوب تميز السحب التنظيمي عن انتهاء الصلاحية"
+    );
+
+    // التتبع الأمامي: من أخذ ماذا؟
+    const affected = await req("GET", `/api/batches/${batch.id}/recall-affected`, {
+      cookie: jar.pharmacist,
+    });
+    assert(affected.status === 200, "GET التتبع الأمامي → 200");
+    assert(
+      (affected.body?.affected ?? []).some(
+        (a: any) => a.saleReference === "E2E-RECALL-SALE" && a.quantity === 3
+      ),
+      "الفاتورة السابقة ظاهرة في المتأثرين (3 وحدات)"
+    );
+    assert(
+      String(affected.body?.affected?.[0]?.customerName ?? "").length > 0,
+      "بيانات العميل متاحة للإبلاغ"
+    );
+    assert(
+      affected.body?.totalUnitsSold >= 3,
+      `مجموع الوحدات المصروفة من الدفعة (${affected.body?.totalUnitsSold})`
+    );
+
+    // التتبع بلا صلاحية → 403
+    const affectedTech = await req("GET", `/api/batches/${batch.id}/recall-affected`, {
+      cookie: jar.tech1,
+    });
+    assert(affectedTech.status === 403, "التتبع الأمامي للصيدلي فما فوق (403 للفني)");
+  }
+
+
   console.log("\n▶ S22: الخروج يمحو كوكي الجلسة فوراً");
   {
     const out = await req("POST", "/api/auth/logout", { cookie: jar.tech1 });

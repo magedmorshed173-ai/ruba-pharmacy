@@ -12,6 +12,11 @@ import {
   type DuplicateGroup,
   type InteractionSeverity,
 } from "@/lib/clinical";
+import {
+  buildRegistryAlerts,
+  hasRegistryBlock,
+  type RegistryAlert,
+} from "@/lib/registry";
 
 export interface ClinicalHit {
   genericA: string;
@@ -31,6 +36,10 @@ export interface ClinicalReview {
   interactions: ClinicalHit[];
   allergyAlerts: AllergyHit[];
   duplicateTherapies: DuplicateGroup[];
+  /** تنبيهات السجل الوطني (تعليق/حظر/غير مسجل/سقف سعر) — v3.7 */
+  registryAlerts: RegistryAlert[];
+  /** حجب تنظيمي مطلق (معلق/محظور) — لا يقبل تجاوزاً سريرياً */
+  registryBlocking: boolean;
   highestSeverity: InteractionSeverity | null;
   /** ممنوع سريرياً أو تعارض حساسية — يستلزم تجاوزاً مسؤولاً للإتمام */
   blocking: boolean;
@@ -43,6 +52,10 @@ export interface ReviewMeds {
   name: string;
   genericName: string;
   atcClass?: string | null;
+  registryStatus?: string | null;
+  registrationNo?: string | null;
+  sellingPrice?: number | null;
+  maxRetailPrice?: number | null;
 }
 
 function mapHit(
@@ -142,6 +155,18 @@ export async function reviewCartClinical(
   const allergyAlerts = patient ? allergyConflicts(patient.allergies, cartMeds) : [];
   const duplicateTherapies = duplicateTherapyGroups(cartMeds);
 
+  // الطبقة التنظيمية الوطنية — v3.7 (فوق الطبقة السريرية)
+  const registryAlerts = buildRegistryAlerts(
+    cartMeds.map((m) => ({
+      id: m.id,
+      name: m.name,
+      registryStatus: m.registryStatus ?? undefined,
+      registrationNo: m.registrationNo,
+      sellingPrice: m.sellingPrice ?? 0,
+      maxRetailPrice: m.maxRetailPrice,
+    }))
+  );
+
   const highestSeverity = interactions.reduce<InteractionSeverity | null>(
     (acc, h) =>
       !acc || SEVERITY_RANK[h.severity] > SEVERITY_RANK[acc] ? h.severity : acc,
@@ -152,6 +177,8 @@ export async function reviewCartClinical(
     interactions,
     allergyAlerts,
     duplicateTherapies,
+    registryAlerts,
+    registryBlocking: hasRegistryBlock(registryAlerts),
     highestSeverity,
     blocking: highestSeverity === "contraindicated" || allergyAlerts.length > 0,
     checkedGenerics: [...cartGenerics, ...patientGenerics],
