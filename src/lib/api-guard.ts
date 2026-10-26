@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { COOKIE_NAME, SessionUser, hasMinRole, verifySession } from "./auth";
+import { cookies, headers } from "next/headers";
+import {
+  COOKIE_NAME,
+  SessionUser,
+  hasMinRole,
+  hashDevice,
+  verifySession,
+} from "./auth";
 
 export function ok(data: unknown, status = 200) {
   return NextResponse.json(data, { status });
@@ -10,14 +16,19 @@ export function fail(message: string, status = 400, extra?: object) {
   return NextResponse.json({ error: message, ...extra }, { status });
 }
 
-/** استخراج المستخدم الحالي من الكوكي — يُستدعى في كل API محمي */
+/** استخراج المستخدم الحالي من الكوكي — يُستدعى في كل API محمي
+ * v3.9: بصمة الجهاز (User-Agent) تُقارن مقابل جلسة القاعدة —
+ * توكن مسروق من متصفح آخر يُرفض هنا تلقائياً */
 export async function getSessionUser(
   request?: NextRequest
 ): Promise<SessionUser | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
-  return verifySession(token);
+  const ua = request
+    ? request.headers.get("user-agent")
+    : (await headers()).get("user-agent");
+  return verifySession(token, hashDevice(ua));
 }
 
 /** حارس مصادقة: يعيد المستخدم أو يرمي استجابة 401 */

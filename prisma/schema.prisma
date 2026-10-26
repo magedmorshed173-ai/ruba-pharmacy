@@ -27,6 +27,7 @@ model User {
 
   sales          Sale[]
   stockMovements StockMovement[]
+  sessions         Session[]
 }
 
 // ───────────────────────────── المخزون ─────────────────────────────
@@ -375,4 +376,21 @@ model Notification {
 
   @@index([isRead])
   @@index([createdAt])
+}
+
+/// جلسة دخول قابلة للسحب (v3.9) — كل توكن JWT يقابله صف هنا؛
+/// بلا صف أو صف مسحوب = التوكن ميت فوراً حتى لو لم تنته صلاحيته
+model Session {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique // SHA-256 للتوكن — لا يُخزن التوكن الخام أبداً
+  deviceHash String? // SHA-256 لـ User-Agent — ربط الجهاز: التوكن المسروق من متصفح آخر يُرفض
+  ip         String?
+  userAgent  String?
+  revokedAt  DateTime?
+  lastUsedAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, revokedAt])
 }

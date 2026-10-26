@@ -1,5 +1,5 @@
 /**
- * جناح الاختبارات الحية — ربي فارمسي v3.5
+ * جناح الاختبارات الحية — ربي فارمسي v3.9
  * مبدأ أساسي: لا محاكاة ولا Mock — خادم إنتاجي حقيقي (standalone build)،
  * قاعدة بيانات SQLite حقيقية، طلبات HTTP فعلية، وتحقق مباشر من قاعدة البيانات.
  *
@@ -10,6 +10,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 // ───────────────────────── البيئة ─────────────────────────
 const ROOT = path.resolve(__dirname, "../..");
@@ -45,15 +46,16 @@ interface HttpResult {
 }
 
 async function req(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT" | "DELETE",
   apiPath: string,
-  opts: { cookie?: string; json?: unknown } = {}
+  opts: { cookie?: string; json?: unknown; ua?: string } = {}
 ): Promise<HttpResult> {
   const res = await fetch(BASE + apiPath, {
     method,
     headers: {
       ...(opts.json !== undefined ? { "Content-Type": "application/json" } : {}),
       ...(opts.cookie ? { Cookie: opts.cookie } : {}),
+      ...(opts.ua ? { "User-Agent": opts.ua } : {}),
     },
     body: opts.json !== undefined ? JSON.stringify(opts.json) : undefined,
   });
@@ -1364,6 +1366,110 @@ async function scenarios(): Promise<void> {
     // بعد المحو لا يوجد كوكي فعلي لدى العميل → الوصول بدون كوكي = 401
     const me = await req("GET", "/api/auth/me");
     assert(me.status === 401, "الوصول بلا كوكي → 401");
+  }
+
+  // S30 — الجلسات القابلة للسحب + ربط الجهاز (v3.9)
+  // قبل v3.9: JWT عديم الحالة — من يسرق نصه يستخدمه من أي جهاز حتى 7 أيام،
+  // والخروج كان يمحو الكوكي من المتصفح فقط دون إبطال على الخادم.
+  console.log("\n▶ S30: الجلسات القابلة للسحب وربط الجهاز");
+  {
+    const UA_A = "E2E-Agent-A (session-owner)";
+    const UA_B = "E2E-Agent-B (second-device)";
+    const UA_X = "E2E-Attacker-Browser/1.0 (stolen-token)";
+
+    // دخول جهاز A — جلسة مسجلة ببصمة جهاز في القاعدة
+    const loginA = await req("POST", "/api/auth/login", {
+      json: { username: "tech1", password: "Tech@2026!" },
+      ua: UA_A,
+    });
+    assert(loginA.status === 200, "دخول الجهاز A → 200", `وصل ${loginA.status}`);
+    const tokenA = cookieFrom(loginA);
+    const rowA = await prisma.session.findFirst({
+      where: { userAgent: UA_A, revokedAt: null },
+    });
+    assert(
+      !!rowA?.deviceHash && !!rowA.tokenHash,
+      "الجلسة مسجلة في القاعدة ببصمة جهاز وبصمة توكن (بلا توكن خام)"
+    );
+
+    // السرقة: نفس الكوكي من جهاز آخر → 401 فوراً
+    const stolen = await req("GET", "/api/auth/me", { cookie: tokenA, ua: UA_X });
+    assert(stolen.status === 401, "التوكن المسروق من جهاز آخر → 401", `وصل ${stolen.status}`);
+    // الجهاز الشرعي نفسه → 200
+    const legit = await req("GET", "/api/auth/me", { cookie: tokenA, ua: UA_A });
+    assert(legit.status === 200, "نفس الجهاز الشرعي → 200");
+
+    // جهاز ثانٍ ثم إنهاء كل الأجهزة الأخرى
+    const loginB = await req("POST", "/api/auth/login", {
+      json: { username: "tech1", password: "Tech@2026!" },
+      ua: UA_B,
+    });
+    assert(loginB.status === 200, "دخول الجهاز B → 200", `وصل ${loginB.status}`);
+    const tokenB = cookieFrom(loginB);
+    const revokeOthers = await req("POST", "/api/auth/sessions", { cookie: tokenB, ua: UA_B });
+    assert(revokeOthers.status === 200, "إنهاء كل الأجهزة الأخرى → 200", `وصل ${revokeOthers.status}`);
+    assert(
+      (revokeOthers.body?.revoked ?? 0) >= 1,
+      `سُحبت جلسات الأجهزة الأخرى (${revokeOthers.body?.revoked})`
+    );
+    // A ميت فوراً رغم أن كوكيه لم يُمس
+    const deadA = await req("GET", "/api/auth/me", { cookie: tokenA, ua: UA_A });
+    assert(deadA.status === 401, "جلسة الجهاز A مسحوبة فوراً رغم أن كوكيه باقٍ");
+    const aliveB = await req("GET", "/api/auth/me", { cookie: tokenB, ua: UA_B });
+    assert(aliveB.status === 200, "جهاز الطلب الحالي باقٍ بعد الإنهاء الجماعي");
+
+    // الخروج الحقيقي: إبطال على الخادم لا مجرد محو متصفح
+    const logoutB = await req("POST", "/api/auth/logout", { cookie: tokenB, ua: UA_B });
+    assert(logoutB.status === 200, "الخروج → 200");
+    const reuseB = await req("GET", "/api/auth/me", { cookie: tokenB, ua: UA_B });
+    assert(
+      reuseB.status === 401,
+      "إعادة استخدام الكوكي بعد الخروج → 401 (إبطال على الخادم)"
+    );
+    const aliveBRows = await prisma.session.count({
+      where: { userAgent: UA_B, revokedAt: null },
+    });
+    assert(aliveBRows === 0, "لا صف جلسة حي متبقٍ للجهاز B في القاعدة");
+
+    // تغيير كلمة المرور ينهي كل جلسات الهدف فوراً
+    // (مستخدم مخصص — عزل عدّاد محاولات الدخول عن tech1)
+    const sUser = await prisma.user.create({
+      data: {
+        username: "e2e-session-user",
+        password: await bcrypt.hash("E2eUser@2026!", 10),
+        fullName: "E2E مستخدم الجلسات",
+        role: "technician",
+      },
+    });
+    const uLogin = await req("POST", "/api/auth/login", {
+      json: { username: "e2e-session-user", password: "E2eUser@2026!" },
+      ua: UA_A,
+    });
+    assert(uLogin.status === 200, "دخول المستخدم المخصص → 200", `وصل ${uLogin.status}`);
+    const uToken = cookieFrom(uLogin);
+    const chPass = await req("PUT", `/api/users/${sUser.id}`, {
+      cookie: jar.admin,
+      json: { password: "E2eUser@2027!" },
+    });
+    assert(chPass.status === 200, "المدير يغيّر كلمة المرور → 200", `وصل ${chPass.status}`);
+    const afterPass = await prisma.session.count({
+      where: { userId: sUser.id, revokedAt: null },
+    });
+    assert(afterPass === 0, `كل جلسات المستخدم انتهت بعد تغيير المرور (الحية: ${afterPass})`);
+    const reuseU = await req("GET", "/api/auth/me", { cookie: uToken, ua: UA_A });
+    assert(reuseU.status === 401, "كوكي ما قبل تغيير المرور ميت فوراً");
+    const oldLogin = await req("POST", "/api/auth/login", {
+      json: { username: "e2e-session-user", password: "E2eUser@2026!" },
+      ua: UA_A,
+    });
+    assert(oldLogin.status === 401, "الكلمة القديمة مرفوضة → 401");
+    const newLogin = await req("POST", "/api/auth/login", {
+      json: { username: "e2e-session-user", password: "E2eUser@2027!" },
+      ua: UA_A,
+    });
+    assert(newLogin.status === 200, "الكلمة الجديدة تعمل → 200", `وصل ${newLogin.status}`);
+    // تنظيف: حذف المستخدم المخصص (جلساته تُمحى بالتتالي)
+    await prisma.user.delete({ where: { id: sUser.id } });
   }
 }
 

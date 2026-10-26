@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { fail, ok, requireRole } from "@/lib/api-guard";
 import { getSessionUser } from "@/lib/api-guard";
+import { cookies } from "next/headers";
+import { COOKIE_NAME, hashToken, revokeAllUserSessions } from "@/lib/auth";
 
 const PUBLIC_FIELDS = {
   id: true,
@@ -56,6 +58,20 @@ export async function PUT(
     }
 
     const user = await db.user.update({ where: { id }, data, select: PUBLIC_FIELDS });
+
+    // v3.9: تغيير كلمة المرور أو إيقاف الحساب = إنهاء جلسات الهدف فوراً
+    // (الجلسة الحالية للمُغيّر نفسه تبقى حية — بقية الأجهزة تنتهي)
+    const passwordChanged = Boolean(body.password);
+    const deactivated = data.isActive === false;
+    if (passwordChanged || deactivated) {
+      const currentToken = (await cookies()).get(COOKIE_NAME)?.value;
+      const keepCurrent =
+        !deactivated && currentToken && me?.id === id
+          ? hashToken(currentToken)
+          : undefined;
+      await revokeAllUserSessions(id, keepCurrent);
+    }
+
     return ok({ user });
   } catch {
     return fail("تعذر تعديل المستخدم", 500);
@@ -85,6 +101,8 @@ export async function DELETE(
 
     if (used) {
       await db.user.update({ where: { id }, data: { isActive: false } });
+      // v3.9: إيقاف الحساب ينهي كل جلساته فوراً (بلا استثناء — الحساب موقوف)
+      await revokeAllUserSessions(id);
       return ok({ message: "المستخدم مرتبط بمبيعات — تم إيقاف حسابه بدل حذفه", deactivated: true });
     }
     await db.user.delete({ where: { id } });

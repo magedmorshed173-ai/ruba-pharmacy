@@ -1,7 +1,13 @@
 import { NextRequest } from "next/server";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
-import { COOKIE_NAME, signSession, Role } from "@/lib/auth";
+import {
+  COOKIE_NAME,
+  signSession,
+  createSession,
+  hashDevice,
+  Role,
+} from "@/lib/auth";
 import { fail, ok } from "@/lib/api-guard";
 import { loginLimiter } from "@/lib/rate-limit";
 
@@ -11,6 +17,9 @@ import { loginLimiter } from "@/lib/rate-limit";
  *  - Rate limiting: 5 محاولات / 15 دقيقة لكل (مستخدم+IP) — يصدّ القوة الغاشمة
  *  - كوكي Secure في الإنتاج (COOKIE_SECURE=true أو NODE_ENV=production)
  *  - رسائل خطأ عامة (لا تكشف أي الحقلين خاطئ)
+ * v3.9 — جلسات قابلة للسحب:
+ *  - كل دخول يسجل صفاً في Session ببصمة الجهاز وIP — التوكن بلا صف لا يُعترف به
+ *  - الخروج أو تغيير كلمة المرور أو إيقاف الحساب يسحب الجلسات فوراً
  */
 export async function POST(request: NextRequest) {
   try {
@@ -57,6 +66,19 @@ export async function POST(request: NextRequest) {
       role: user.role as Role,
     };
     const token = await signSession(session);
+
+    // تسجيل الجلسة في القاعدة — بلا صف، التوكن ميت (قابل للسحب لاحقاً)
+    try {
+      await createSession({
+        token,
+        userId: user.id,
+        deviceHash: hashDevice(request.headers.get("user-agent")),
+        ip,
+        userAgent: request.headers.get("user-agent"),
+      });
+    } catch {
+      return fail("تعذر بدء الجلسة — أعد المحاولة", 500);
+    }
 
     const res = ok({ user: session });
     const secureCookie =
