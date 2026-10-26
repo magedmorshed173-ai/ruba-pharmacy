@@ -1,5 +1,5 @@
 /**
- * جناح الاختبارات الحية — ربي فارمسي v3.9
+ * جناح الاختبارات الحية — ربي فارمسي v4.0
  * مبدأ أساسي: لا محاكاة ولا Mock — خادم إنتاجي حقيقي (standalone build)،
  * قاعدة بيانات SQLite حقيقية، طلبات HTTP فعلية، وتحقق مباشر من قاعدة البيانات.
  *
@@ -144,6 +144,14 @@ async function setup(): Promise<void> {
     encoding: "utf-8",
   });
   if (seed.status !== 0) throw new Error(`seed فشل:\n${seed.stderr}`);
+
+  // v4.0: دليل الدواء المرخص — idempotent، يلي seed الأساسي دائماً
+  const seedDrugs = spawnSync("bun", ["scripts/seed-drugs.ts"], {
+    cwd: ROOT,
+    env: { ...process.env, DATABASE_URL },
+    encoding: "utf-8",
+  });
+  if (seedDrugs.status !== 0) throw new Error(`seed-drugs فشل:\n${seedDrugs.stderr}`);
 
   console.log("🚀 تشغيل خادم الإنتاج (standalone)…");
   await startServer();
@@ -1470,6 +1478,221 @@ async function scenarios(): Promise<void> {
     assert(newLogin.status === 200, "الكلمة الجديدة تعمل → 200", `وصل ${newLogin.status}`);
     // تنظيف: حذف المستخدم المخصص (جلساته تُمحى بالتتالي)
     await prisma.user.delete({ where: { id: sUser.id } });
+  }
+
+  // S31 — دليل الدواء الوطني: خدمة عامة للعميل (v4.0)
+  console.log("\n▶ S31: دليل الدواء — بحث عام بلا جلسة");
+  {
+    const pub = await req("GET", "/api/drugs?pageSize=60");
+    assert(pub.status === 200, "الدليل عام — الوصول بلا جلسة → 200", `وصل ${pub.status}`);
+    assert((pub.body?.total ?? 0) >= 40, `الكتالوج المرخص ≥ 40 (${pub.body?.total})`);
+    assert((pub.body?.categories ?? []).length >= 8, `واجهات الفئات ≥ 8 (${pub.body?.categories?.length})`);
+    const linked = (pub.body?.results ?? []).filter((d: any) => d.availability?.linked);
+    assert(linked.length >= 25, `المنتجات المربوطة بالمخزون الحي ≥ 25 (${linked.length})`);
+    // التطبيع العربي: بلا همزات تجد البطاقة
+    const arabic = await req("GET", "/api/drugs?q=" + encodeURIComponent("اموكسيسيلين"));
+    assert(
+      (arabic.body?.results ?? []).some((d: any) => d.tradeName === "أموكسيل 500"),
+      "التطبيع العربي: «اموكسيسيلين» تجد أموكسيل"
+    );
+    // البحث اللاتيني
+    const latin = await req("GET", "/api/drugs?q=warfarin");
+    assert(
+      (latin.body?.results ?? []).some((d: any) => d.tradeName === "كومادين 5"),
+      "البحث اللاتيني: warfarin تجد كومادين"
+    );
+    // الترتيب السعري على الكتالوج كاملاً
+    const sorted = await req("GET", "/api/drugs?sort=price-asc&pageSize=60");
+    const prices = (sorted.body?.results ?? []).map((d: any) => d.priceHalalas);
+    const isSorted = prices.every((p: number, i: number) => i === 0 || prices[i - 1] <= p);
+    assert(isSorted && prices.length >= 40, `الترتيب السعري تصاعدي على ${prices.length} بطاقة`);
+    // مرشحات OTC والفئة
+    const otc = await req("GET", "/api/drugs?otc=1&pageSize=60");
+    assert(
+      (otc.body?.results ?? []).every((d: any) => !d.requiresRx),
+      `مرشح OTC: كل النتائج بلا وصفة (${otc.body?.total})`
+    );
+    const cat = await req("GET", "/api/drugs?category=" + encodeURIComponent("سكري"));
+    const catRows = cat.body?.results ?? [];
+    assert(
+      catRows.length >= 3 && catRows.every((d: any) => d.category === "سكري"),
+      `مرشح الفئة: سكري (${catRows.length})`
+    );
+  }
+
+  // S32 — النشرة المرخصة + التوفر الحي + البدائل الموفرة
+  console.log("\n▶ S32: نشرة الدواء + التوفر الحي + البدائل الموفرة");
+  {
+    const list = await req("GET", "/api/drugs?q=" + encodeURIComponent("أدول 500"));
+    const adol = (list.body?.results ?? [])[0];
+    assert(!!adol, "أدول 500 موجود في الدليل");
+    const det = await req("GET", `/api/drugs/${adol.id}`);
+    assert(
+      det.status === 200 && det.body?.drug?.tradeName === "أدول 500",
+      "النشرة تعيد البطاقة الكاملة"
+    );
+    const dg = det.body?.drug ?? {};
+    assert(
+      !!dg.indications && dg.indications.length > 30,
+      "دواعي الاستعمال محتوى مرخص حقيقي"
+    );
+    assert(
+      !!dg.dosageGuide && !!dg.sideEffects && !!dg.contraindications,
+      "النشرة: جرعة + آثار جانبية + موانع"
+    );
+    assert(dg.pregnancyCategory === "B", `فئة الحمل موثقة (${dg.pregnancyCategory})`);
+    assert(
+      det.body?.availability?.linked === true,
+      "التوفر الحي مربوط بالمخزون عبر الباركود"
+    );
+    // البدائل: الباراسيتامول له منتجان (أدول 650 / بانادول أدفانس 975)
+    const alts = det.body?.alternatives ?? [];
+    const panFromAdol = alts.find((a: any) => a.tradeName === "بانادول أدفانس 500");
+    assert(
+      alts.length >= 1 && !!panFromAdol,
+      "بدائل الباراسيتامول: بانادول أدفانس موجود"
+    );
+    assert(
+      panFromAdol.savingsHalalas === -325 && panFromAdol.cheaperByPct === -50,
+      `حساب الوفر دقيق (${panFromAdol?.savingsHalalas} هللة، ${panFromAdol?.cheaperByPct}%)`
+    );
+    // من منظور بانادول: أدول أرخص بـ 325 هللة (33%) ويظهر أولاً
+    const listP = await req("GET", "/api/drugs?q=" + encodeURIComponent("بانادول"));
+    const panadol = (listP.body?.results ?? [])[0];
+    const detP = await req("GET", `/api/drugs/${panadol.id}`);
+    const altsP = detP.body?.alternatives ?? [];
+    const adolFromP = altsP.find((a: any) => a.tradeName === "أدول 500");
+    assert(
+      adolFromP?.savingsHalalas === 325 && adolFromP?.cheaperByPct === 33,
+      `البديل الأرخص يوفر 325 هللة (33%)`
+    );
+    assert(altsP[0]?.tradeName === "أدول 500", "الأرخص يُرتَّب أولاً");
+    // التداخلات الموثقة في النشرة: الباراسيتامول × الوارفارين
+    const inter = det.body?.interactions ?? [];
+    const wf = inter.find((i: any) => i.otherGeneric === "warfarin");
+    assert(
+      !!wf && wf.severity === "moderate" && !!wf.management,
+      "تداخل موثق في النشرة: warfarin مع خطة إدارة"
+    );
+    const missing = await req("GET", "/api/drugs/does-not-exist");
+    assert(missing.status === 404, "بطاقة غير موجودة → 404");
+  }
+
+  // S33 — فاحص التفاعلات للعميل: نفس محرك البوابة السريرية
+  console.log("\n▶ S33: فاحص التفاعلات — محرك clinical كامل بلا جلسة");
+  {
+    const findId = async (name: string) => {
+      const r = await req("GET", "/api/drugs?q=" + encodeURIComponent(name));
+      return (r.body?.results ?? [])[0]?.id;
+    };
+    const warf = await findId("كومادين");
+    const asp = await findId("أسبرين بروتكت");
+    const ibu = await findId("بروفين 400");
+    const sil = await findId("فياجرا");
+    const iso = await findId("إيزوكيت");
+    const zyr = await findId("زيرتك");
+    const vitc = await findId("فيتامين س");
+    assert(!!warf && !!asp && !!ibu && !!sil && !!iso && !!zyr && !!vitc, "كل بطاقات الفحص موجودة");
+    // زوج خطير موثق
+    const pair = await req("POST", "/api/drugs/interactions", { json: { drugIds: [warf, asp] } });
+    assert(
+      pair.status === 200 && pair.body?.summary?.pairs === 1,
+      `زوج واحد موثق (${pair.body?.summary?.pairs})`
+    );
+    assert(pair.body?.results?.[0]?.severity === "major", "الشدة major");
+    assert(
+      !!pair.body?.results?.[0]?.mechanism &&
+        !!pair.body?.results?.[0]?.management &&
+        !!pair.body?.results?.[0]?.source,
+      "آلية + إدارة + مصدر علمي"
+    );
+    // استقلال الترتيب
+    const rev = await req("POST", "/api/drugs/interactions", { json: { drugIds: [asp, warf] } });
+    assert(
+      rev.body?.summary?.pairs === 1 && rev.body?.results?.[0]?.severity === "major",
+      "استقلال الترتيب: نفس النتيجة بمعكوس الأزواج"
+    );
+    // ثلاثي: وارفارين+أسبرين، وارفارين+إيبوبروفين (major)، أسبرين+إيبوبروفين (moderate)
+    const trio = await req("POST", "/api/drugs/interactions", { json: { drugIds: [warf, asp, ibu] } });
+    assert(trio.body?.summary?.pairs === 3, `ثلاثي = 3 أزواج (${trio.body?.summary?.pairs})`);
+    assert(trio.body?.summary?.highest === "major", "الأخطر: major");
+    assert(trio.body?.summary?.bySeverity?.moderate === 1, "توزيع الشدة: 1 متوسط");
+    // ممنوع سريرياً حاجب
+    const contra = await req("POST", "/api/drugs/interactions", { json: { drugIds: [sil, iso] } });
+    assert(
+      contra.body?.summary?.blocking === true && contra.body?.summary?.highest === "contraindicated",
+      "نترات × PDE5 → ممنوع سريرياً (حاجب)"
+    );
+    // زوج آمن
+    const safe = await req("POST", "/api/drugs/interactions", { json: { drugIds: [zyr, vitc] } });
+    assert(safe.body?.summary?.pairs === 0, "زوج آمن: صفر تداخلات");
+    // العلاج المكرر: أدول + بانادول (نفس الفئة العلاجية)
+    const adol2 = await findId("أدول 500");
+    const pan2 = await findId("بانادول");
+    const dup = await req("POST", "/api/drugs/interactions", { json: { drugIds: [adol2, pan2] } });
+    assert((dup.body?.duplicates ?? []).length >= 1, "علاج مكرر مرصود: باراسيتامول بنفس الفئة");
+    // تحقق المدخلات
+    const one = await req("POST", "/api/drugs/interactions", { json: { drugIds: [warf] } });
+    assert(one.status === 400, "دواء واحد → 400");
+    const nine = await req("POST", "/api/drugs/interactions", {
+      json: { drugIds: [warf, asp, ibu, sil, iso, zyr, vitc, adol2, pan2] },
+    });
+    assert(nine.status === 400, "9 أدوية → 400 (حد 8)");
+    const bad = await req("POST", "/api/drugs/interactions", { json: { drugIds: [warf, "nope-404"] } });
+    assert(bad.status === 404, "معرف غير موجود → 404");
+  }
+
+  // S34 — حاكمية محتوى الدليل: قراءة عامة، كتابة محمية بالأدوار
+  console.log("\n▶ S34: حاكمية المحتوى — قراءة عامة وكتابة محمية");
+  {
+    // S30 سحبت كل جلسات tech1 عمداً (اختبار الإنهاء الجماعي) — نعيد الدخول لهذه المرحلة
+    await login("tech1", "Tech@2026!");
+    const draft = {
+      tradeName: `دواء E2E ${Date.now()}`,
+      scientificName: "e2e-substance",
+      scientificNameAr: "مادة اختبار",
+      form: "أقراص",
+      strength: "1 ملغ",
+      manufacturer: "مختبر E2E",
+      priceHalalas: 1000,
+      category: "مضادات حيوية",
+      indications: "بطاقة اختبار آلي حية لدليل الدواء v4.0 — تُحذف تلقائياً.",
+      dosageGuide: "قرص واحد يومياً أثناء الاختبار فقط.",
+      sideEffects: "لا آثار — بطاقة افتراضية للتحقق من الحاكمية.",
+      contraindications: "لا موانع — بطاقة افتراضية.",
+    };
+    const anon = await req("POST", "/api/drugs", { json: draft });
+    assert(anon.status === 401, "إضافة بلا جلسة → 401", `وصل ${anon.status}`);
+    const tech = await req("POST", "/api/drugs", { cookie: jar.tech1, json: draft });
+    assert(tech.status === 403, "فني → 403", `وصل ${tech.status}`);
+    const ph = await req("POST", "/api/drugs", { cookie: jar.pharmacist, json: draft });
+    assert(ph.status === 201, "صيدلي ينشئ بطاقة → 201", `وصل ${ph.status}`);
+    const newId = ph.body?.drug?.id;
+    const badBc = await req("POST", "/api/drugs", {
+      cookie: jar.pharmacist,
+      json: { ...draft, tradeName: draft.tradeName + "-BC", linkedBarcode: "0000000000000" },
+    });
+    assert(badBc.status === 400, "باركود غير مخزون → 400");
+    const dup = await req("POST", "/api/drugs", { cookie: jar.pharmacist, json: draft });
+    assert(dup.status === 409, "اسم تجاري مكرر → 409");
+    const upd = await req("PUT", `/api/drugs/${newId}`, {
+      cookie: jar.pharmacist,
+      json: { priceHalalas: 1234, indications: "تحديث E2E للنشرة" },
+    });
+    assert(
+      upd.status === 200 && upd.body?.drug?.priceHalalas === 1234,
+      "صيدلي يحدّث النشرة → 200",
+      `وصل ${upd.status} — ${JSON.stringify(upd.body)?.slice(0, 120)}`
+    );
+    const techUpd = await req("PUT", `/api/drugs/${newId}`, {
+      cookie: jar.tech1,
+      json: { priceHalalas: 1 },
+    });
+    assert(techUpd.status === 403, "تحديث بفني → 403", `وصل ${techUpd.status}`);
+    const still = await prisma.drug.findUnique({ where: { id: newId } });
+    assert(still?.priceHalalas === 1234, "القاعدة تعكس التحديث الموثوق");
+    // تنظيف البطاقة المؤقتة
+    await prisma.drug.delete({ where: { id: newId } });
   }
 }
 
