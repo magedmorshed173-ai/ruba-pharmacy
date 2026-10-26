@@ -174,7 +174,7 @@ ruba-pharmacy/
 
 <div align="center">
 
-**ربي فارمسي** — منتج تطويره فريق **Ruba Pharmacy Team** 🇸🇦
+**ربي فارمسي** — منتج تطويره فريق **Ruba Pharmacy Team**
 
 </div>
 
