@@ -40,11 +40,17 @@ jobs:
           fi
           echo "::add-mask::$NEON_API_KEY"
 
-      - name: حلّ المشروع وسلسلتي الاتصال (مخفيتين)
+      - name: تشخيص شبكة — أي مكدس DNS يصل إلى Neon؟
+        run: |
+          echo "getent:   $(getent hosts api.neon.tech | head -1 || echo FAIL)"
+          echo "curl:     $(curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://api.neon.tech/v2 || echo FAIL)"
+          echo "node:     $(node -e "fetch('https://api.neon.tech/v2').then(r=>console.log(r.status)).catch(e=>{console.error(e.cause?.code||e.message);process.exit(1)})" || echo FAIL)"
+
+      - name: حلّ المشروع وسلسلتي الاتصال (مخفيتين — curl/python متجنباً DNS الخاص بـ bun)
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_NAME: ruba-pharmacy
-        run: bun scripts/neon-resolve.ts
+        run: python3 scripts/neon_resolve.py
 
       - name: تثبيت الاعتماديات
         run: bun install --frozen-lockfile

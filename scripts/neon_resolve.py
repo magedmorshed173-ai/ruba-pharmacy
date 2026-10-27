@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""
+حلّ أو أنشئ مشروع Neon واستخرج سلسلتي الاتصال — v4.6.3
+يعمل داخل workflow «Neon Bootstrap» عبر python3 + urllib (getaddrinfo
+النظامي — تجنّباً لفشل DNS الخاص بـ bun/c-ares على العدّاءين).
+- يقرأ NEON_API_KEY من البيئة، يجد المشروع باسم NEON_PROJECT_NAME أو
+  ينشئه (aws-us-east-2 / pg16)، ينتظر جاهزية نقطة النهاية.
+- يصدّر DATABASE_URL (المجمّعة) و DIRECT_URL (المباشرة) إلى $GITHUB_ENV
+  بصيغة heredoc، مع ::add-mask:: للسلسلتين وكلمة المرور والمضيف —
+  سجلات المهمة عمومية ولا يجوز أن تحمل أي قيمة حساسة.
+القيم لا تُطبع أبداً: الإخراج أسماء وحالات وعناصر محجوبة فقط.
+"""
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+API = "https://api.neon.tech/v2"
+PROJECT_NAME = os.environ.get("NEON_PROJECT_NAME", "ruba-pharmacy")
+
+
+def mask(value: str) -> None:
+    print(f"::add-mask::{value}")
+
+
+def api(path: str, data: dict | None = None, method: str | None = None) -> dict:
+    key = os.environ.get("NEON_API_KEY", "")
+    if not key:
+        print(
+            "::error::NEON_API_KEY غير مضبوط — خذه من console.neon.tech "
+            "(Account → API Keys) ثم: Settings → Secrets and variables → Actions"
+        )
+        sys.exit(1)
+    body = json.dumps(data).encode() if data is not None else None
+    req = urllib.request.Request(
+        f"{API}{path}",
+        data=body,
+        method=method or ("POST" if body is not None else "GET"),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as res:
+            raw = res.read()
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        print(f"::error::فشل نداء Neon API {method or 'GET'} {path} — الحالة {e.code}")
+        print(e.read().decode()[:400])
+        sys.exit(1)
+    except urllib.error.URLError as e:
+        print(f"::error::تعذر الوصول إلى Neon API: {e.reason}")
+        sys.exit(1)
+
+
+def wait_ready(project_id: str, branch_id: str) -> None:
+    for _ in range(30):
+        eps = api(f"/projects/{project_id}/branches/{branch_id}/endpoints").get(
+            "endpoints", []
+        )
+        statuses = [e.get("status", "ready") for e in eps]
+        if statuses and all(s in ("ready", "idle") for s in statuses):
+            return
+        time.sleep(3)
+    print("::error::انتهت مهلة انتظار جاهزية نقطة نهاية Neon (90 ثانية)")
+    sys.exit(1)
+
+
+def main() -> None:
+    # 1) المشروع: موجود أو جديد
+    projects = api("/projects").get("projects", [])
+    project = next((p for p in projects if p.get("name") == PROJECT_NAME), None)
+    if project:
+        print(
+            f"مشروع موجود: {project['name']} ({project['id']}) — "
+            f"pg{project.get('pg_version')} @ {project.get('region_id')}"
+        )
+    else:
+        print(
+            f"::notice::لا مشروع باسم {PROJECT_NAME} — إنشاء جديد على "
+            "aws-us-east-2 (الأقرب لـ Vercel iad1)"
+        )
+        project = api(
+            "/projects",
+            {
+                "project": {
+                    "name": PROJECT_NAME,
+                    "pg_version": 16,
+                    "region_id": "aws-us-east-2",
+                }
+            },
+            method="POST",
+        )["project"]
+        print(f"أُنشئ المشروع: {project['name']} ({project['id']})")
+
+    # 2) الفرع الافتراضي + جاهزية النهاية
+    branches = api(f"/projects/{project['id']}/branches").get("branches", [])
+    branch = next((b for b in branches if b.get("default")), None) or (
+        branches[0] if branches else None
+    )
+    if not branch:
+        print("::error::لا فرع افتراضي في المشروع")
+        sys.exit(1)
+    wait_ready(project["id"], branch["id"])
+
+    # 3) سلسلتا الاتصال — المجمّعة (-pooler) للتشغيل والمباشرة للترحيلات
+    uris = {}
+    for label, pooled in (("pooled", "true"), ("direct", "false")):
+        res = api(
+            f"/projects/{project['id']}/branches/{branch['id']}/connection_uri"
+            f"?pooled={pooled}"
+        )
+        uris[label] = res["uri"]
+
+    for uri in list(uris.values()):
+        mask(uri)
+        try:
+            parsed = urllib.parse.urlparse(uri)
+            if parsed.password:
+                mask(parsed.password)
+            if parsed.hostname:
+                mask(parsed.hostname)
+        except Exception:
+            pass
+
+    # 4) تصدير heredoc آمن للرموز الخاصة
+    env_file = os.environ.get("GITHUB_ENV")
+    if not env_file:
+        print(
+            "::error::GITHUB_ENV غير متوفر — هذا السكربت داخل GitHub Actions حصراً"
+        )
+        sys.exit(1)
+    with open(env_file, "a", encoding="utf-8") as f:
+        f.write(f"DATABASE_URL<<NEON_EOF\n{uris['pooled']}\nNEON_EOF\n")
+        f.write(f"DIRECT_URL<<NEON_EOF\n{uris['direct']}\nNEON_EOF\n")
+
+    print(
+        "✅ سلسلتا الاتصال حُلّتا وصُدّرتا إلى بيئة المهمة (مخفيتان في السجلات): "
+        "pooled للتشغيل + direct للترحيلات"
+    )
+
+
+if __name__ == "__main__":
+    main()
