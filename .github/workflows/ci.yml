@@ -79,6 +79,11 @@ jobs:
       - name: تثبيت الاعتماديات
         run: bun install --frozen-lockfile
 
+      - name: توليد عميل Prisma
+        # v4.6.1 — كان غائباً هنا: العدّاء النظيف لا يملك .prisma/client المولّد
+        # (محلياً كان يعمل بالمولّد سلفاً — CI كشف الكسر الحقيقي)
+        run: bunx prisma generate
+
       - name: الترحيلات على Postgres الخدمي
         run: bunx prisma migrate deploy
 
