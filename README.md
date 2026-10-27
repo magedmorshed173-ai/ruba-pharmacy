@@ -41,6 +41,12 @@
 | 📟 Termux (أندرويد) | خادم كامل داخل الهاتف: يجهّز Debian داخل proot تلقائياً |
 | 🐳 خوادم VPS/NAS | Docker Compose (قاعدة + ترحيلات + منصة بأمر واحد) |
 
+> **v4.8.0 — العمل دون اتصال (Offline-First):** Service Worker كامل يجعل
+> الصفحات المزارة حديثاً متاحة بلا إنترنت مع سقوط أنيق إلى `/offline` —
+> بلا تخزين أي بيانات تشغيلية محلياً (`/api` لا يُخبَّز أبداً)، وتمحيص
+> فوري للذاكرة عند إقفال النظام. وتنبيه ذكي قبل انتهاء مفتاح النظام مع
+> تمديد داخلي بلا خسارة العمل.
+
 ```bash
 # Linux · macOS · WSL · Termux — مثبّت شامل بأمر واحد:
 curl -fsSL https://raw.githubusercontent.com/magedmorshed173-ai/ruba-pharmacy/main/scripts/install.sh | bash

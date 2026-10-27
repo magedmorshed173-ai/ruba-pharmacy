@@ -36,13 +36,37 @@ export function lockEpoch(): string {
 }
 
 /**
+ * v4.8 — من يملك مفتاح النظام؟
+ *  - "admin" (افتراضي): كلمة مرور أي مدير نشط — النموذج الأصلي الأكثر تحصيناً.
+ *  - "users": أي مستخدم نشط يفتح باسمه وكلمة مروره — للمواقع متعددة الموظفين،
+ *    والتدقيق يسجل اسم المُفتِح في كل محاولة. يُضبط بمتغير LOCK_MODE فقط.
+ */
+export type LockMode = "admin" | "users";
+
+export function lockMode(): LockMode {
+  const m = (process.env.LOCK_MODE ?? "admin").trim().toLowerCase();
+  return m === "users" ? "users" : "admin";
+}
+
+/**
+ * v4.8 — متى يُنذَر المستخدم قبل انتهاء مفتاح الفتح؟
+ * الأصغر بين 10 دقائق وسُدس مدة الفتح — وبحد أدنى دقيقة (للأمد القصيرة جداً).
+ * دالة نقية (بلا بيئة) لقابلية الاختبار — تستقبل المدة بالثواني.
+ */
+export function lockWarnBeforeSec(ttlSec: number): number {
+  return Math.max(60, Math.min(10 * 60, Math.floor(ttlSec / 6)));
+}
+
+/**
  * المسارات المستثناة من القفل — لا تكشف شيئاً عن بيانات النظام:
- *  - /lock       شاشة القفل نفسها (وإلا حلقة توجيه لا نهائية)
- *  - /api/lock   واجهة التحقق من المفتاح
- *  - /download   صفحة التحميل العامة (روابط التوزيع فقط — بلا بيانات تشغيل)
+ *  - /lock        شاشة القفل نفسها (وإلا حلقة توجيه لا نهائية)
+ *  - /api/lock    واجهة التحقق من المفتاح + حالة القفل (v4.8 — بلا بيانات تشغيل)
+ *  - /download    صفحة التحميل العامة (روابط التوزيع فقط — بلا بيانات تشغيل)
+ *  - /offline     صفحة السقوط دون اتصال (v4.8 — ساكنة بلا أي بيانات)
+ *  - /sw.js       الـ Service Worker (v4.8 — يجب أن يصل المتصفح حتى والقفل مشدود)
  * ملاحظة: الملفات الثابتة (أيقونات/manifest/robots) مستثناة أصلاً في matcher.
  */
-const PUBLIC_PATHS = ["/lock", "/api/lock", "/download"];
+const PUBLIC_PATHS = ["/lock", "/api/lock", "/download", "/offline", "/sw.js"];
 
 export function isLockPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(

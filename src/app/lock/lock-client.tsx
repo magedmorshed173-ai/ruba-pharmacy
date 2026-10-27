@@ -28,6 +28,8 @@ export function LockClient() {
   const params = useSearchParams();
 
   const [key, setKey] = useState("");
+  const [username, setUsername] = useState("");
+  const [mode, setMode] = useState<"admin" | "users">("admin");
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,8 +43,29 @@ export function LockClient() {
     setNextPath(raw.startsWith("/") && !raw.startsWith("//") ? raw : "/");
   }, [params]);
 
+  // v4.8 — وضع المفاتيح (admin/users) لتكييف الحقول + تمحيص خبز الصفحات
+  // في الـ SW (وصلنا لشاشة القفل ⇒ النظام مقفل ⇒ لا نسخ صفحات قديمة محلياً)
+  useEffect(() => {
+    try {
+      navigator.serviceWorker?.controller?.postMessage({ type: "PURGE_PAGES" });
+    } catch {
+      /* بلا SW */
+    }
+    api<{ mode?: "admin" | "users" }>("/api/lock/status")
+      .then((s) => {
+        if (s.mode === "users") setMode("users");
+      })
+      .catch(() => {
+        /* الافتراضي admin */
+      });
+  }, []);
+
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
+    if (mode === "users" && !username.trim()) {
+      setError("أدخل اسم المستخدم");
+      return;
+    }
     if (!key) {
       setError("أدخل مفتاح النظام");
       return;
@@ -52,7 +75,12 @@ export function LockClient() {
     try {
       await api("/api/lock/verify", {
         method: "POST",
-        json: { password: key },
+        json: {
+          password: key,
+          ...(mode === "users"
+            ? { username: username.trim().toLowerCase() }
+            : {}),
+        },
       });
       // فتح ناجح — الكوكي استُلم، الانتقال للوجهة المطلوبة
       window.location.replace(nextPath);
@@ -85,8 +113,10 @@ export function LockClient() {
               <LockKeyhole className="size-8 text-teal-300" />
             </div>
             <h1 className="text-4xl font-extrabold leading-snug">
-              النظام محمي
-              <span className="text-teal-300"> بمفتاح المدير</span>
+              النظام محمي{" "}
+              <span className="text-teal-300">
+                {mode === "users" ? "بمفاتيح الحسابات" : "بمفتاح المدير"}
+              </span>
             </h1>
             <p className="mt-4 leading-relaxed text-white/70">
               طبقة حماية أولى قبل تسجيل الدخول: كل من يفتح النظام من أي جهاز
@@ -97,7 +127,7 @@ export function LockClient() {
             <div className="mt-10 grid grid-cols-2 gap-4">
               {[
                 { icon: ShieldCheck, t: "حماية شاملة", d: "كل الصفحات والواجهات خلف القفل" },
-                { icon: KeyRound, t: "مفتاح واحد", d: "كلمة مرور مدير النظام" },
+                { icon: KeyRound, t: mode === "users" ? "مفتاح لكل موظف" : "مفتاح واحد", d: mode === "users" ? "باسم المستخدم وكلمة المرور" : "كلمة مرور مدير النظام" },
                 { icon: BarChart3, t: "تدقيق كامل", d: "كل محاولة فتح مسجلة بالـ IP" },
                 { icon: BellRing, t: "صدّ القوة الغاشمة", d: "حد محاولات دائم في القاعدة" },
               ].map(({ icon: Icon, t, d }) => (
@@ -145,6 +175,26 @@ export function LockClient() {
             </div>
 
             <form onSubmit={submit} className="space-y-4" noValidate>
+              {mode === "users" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="lock-username">اسم المستخدم</Label>
+                  <Input
+                    id="lock-username"
+                    name="lock-username"
+                    type="text"
+                    autoComplete="username"
+                    dir="ltr"
+                    className="text-start"
+                    placeholder="اسم حسابك في النظام"
+                    value={username}
+                    onChange={(e) => {
+                      setUsername(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    disabled={loading}
+                  />
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label htmlFor="lock-key">مفتاح النظام</Label>
                 <div className="relative">
@@ -155,7 +205,7 @@ export function LockClient() {
                     type={showKey ? "text" : "password"}
                     inputMode="text"
                     autoComplete="current-password"
-                    placeholder="كلمة مرور مدير النظام"
+                    placeholder={mode === "users" ? "كلمة مرور حسابك" : "كلمة مرور مدير النظام"}
                     className="pr-9 pl-10"
                     value={key}
                     autoFocus
@@ -198,8 +248,9 @@ export function LockClient() {
             </form>
 
             <p className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
-              المفتاح متاح لمدير النظام فقط — كل محاولة فتح (صحيحة أو خاطئة)
-              تُسجَّل في سجل التدقيق مع عنوان IP ووقت المحاولة
+              {mode === "users"
+                ? "كل مستخدم نشط يفتح بحسابه — وكل محاولة تُسجَّل في سجل التدقيق باسم صاحبها مع عنوان IP ووقت المحاولة"
+                : "المفتاح متاح لمدير النظام فقط — كل محاولة فتح (صحيحة أو خاطئة) تُسجَّل في سجل التدقيق مع عنوان IP ووقت المحاولة"}
             </p>
           </div>
         </div>

@@ -47,4 +47,46 @@ test.describe("قفل النظام بمفتاح المدير", () => {
     // خلف القفل: شاشة الدخول (اسم المستخدم) — القفل سقط والدخول طبقة مستقلة
     await expect(page.getByLabel("اسم المستخدم")).toBeVisible({ timeout: 20_000 });
   });
+
+  // ── v4.8: واجهة حالة القفل + مسارات الـ SW/العمل دون اتصال ──
+
+  test("واجهة حالة القفل تعلن المقفل وتكشف الوضع دون أي بيانات", async ({ request }) => {
+    const res = await request.get("/api/lock/status");
+    expect(res.status()).toBe(200);
+    const body = (await res.json()) as {
+      locked?: boolean;
+      mode?: string;
+      warnBeforeSec?: number;
+      expiresAt?: string | null;
+    };
+    expect(body.locked).toBe(true);
+    expect(body.mode).toBe("admin");
+    expect(body.warnBeforeSec).toBeGreaterThan(0);
+    expect(body.expiresAt ?? null).toBeNull();
+  });
+
+  test("حالة القفل بعد الفتح تعرض صلاحية المفتاح وموعد التنبيه", async ({ page }) => {
+    test.skip(!hasE2ECreds, "يتطلب قاعدة + بيانات مدير E2E");
+    await unlockSystem(page);
+    const res = await page.request.get("/api/lock/status");
+    expect(res.status()).toBe(200);
+    const body = (await res.json()) as {
+      locked?: boolean;
+      expiresAt?: string | null;
+      warnBeforeSec?: number;
+    };
+    expect(body.locked).toBe(false);
+    expect(typeof body.expiresAt).toBe("string");
+    expect(body.warnBeforeSec).toBeGreaterThan(0);
+  });
+
+  test("الـ Service Worker وصفحة دون اتصال متاحان حتى والقفل مشدود", async ({ request }) => {
+    const sw = await request.get("/sw.js");
+    expect(sw.status()).toBe(200);
+    expect(sw.headers()["content-type"]).toContain("javascript");
+
+    const offline = await request.get("/offline");
+    // قد تكون 200 مباشرة أو توجيه للقفل حسب ترتيب الدفاع — المهم ليست بيانات
+    expect([200, 307]).toContain(offline.status());
+  });
 });

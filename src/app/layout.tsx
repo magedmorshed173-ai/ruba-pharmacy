@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
+import { RegisterServiceWorker } from "@/components/pwa/register-sw";
 
 const tajawal = Tajawal({
   variable: "--font-tajawal",
@@ -41,6 +42,7 @@ export default function RootLayout({
           {children}
           <Toaster />
           <Sonner position="top-center" richColors dir="rtl" />
+          <RegisterServiceWorker />
         </ThemeProvider>
       </body>
     </html>

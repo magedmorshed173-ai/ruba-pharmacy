@@ -19,6 +19,7 @@ import { DrugGuideView } from "./drug-guide-view";
 import { NationalRegistryView } from "./national-registry-view";
 import { LoginAuditsCard } from "./login-audits-card";
 import { OfflineBanner } from "./offline-banner";
+import { LockExpiryWatcher } from "./lock-expiry-watcher";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -229,6 +230,7 @@ export function AppShell() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <OfflineBanner />
+        <LockExpiryWatcher />
         {/* الشريط العلوي */}
         <header className="sticky top-0 z-40 flex h-14 items-center gap-3 border-b bg-card/80 px-4 backdrop-blur lg:px-6">
           <Button
