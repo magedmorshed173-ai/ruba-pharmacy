@@ -1,18 +1,83 @@
+# ============================================================
+# ربي فارمسي — Ruba Pharmacy Platform
+# v4.6.2 — كل الأسطح على PostgreSQL (المخطط حصرياً postgresql منذ v4.2)
+# التشغيل:  export AUTH_SECRET="$(openssl rand -hex 32)" && docker compose up -d --build
+# بيانات تجريبية (اختياري):  docker compose run --rm seed
+# ============================================================
+
 services:
+  # ── قاعدة PostgreSQL المحلية — بيانات الصيدلية في وحدة تخزين دائمة ──
+  db:
+    image: postgres:16-alpine
+    container_name: ruba-db
+    environment:
+      POSTGRES_USER: ruba
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ruba_local_only}   # كلمة مرور الشبكة الداخلية فقط — غيّرها في النشر المكشوف
+      POSTGRES_DB: ruba
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ruba -d ruba"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # ── الترحيلات — تُطبق مرة عند كل إقلاع ثم تكتمل (لا خادم دائم) ──
+  db-migrate:
+    build:
+      context: .
+      target: toolkit
+    image: ruba-toolkit:4.6.2
+    environment:
+      DATABASE_URL: postgresql://ruba:${POSTGRES_PASSWORD:-ruba_local_only}@db:5432/ruba?schema=public
+      DIRECT_URL: postgresql://ruba:${POSTGRES_PASSWORD:-ruba_local_only}@db:5432/ruba?schema=public
+    command: ["bunx", "prisma", "migrate", "deploy"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # ── بيانات تجريبية اختيارية: docker compose run --rm seed ──
+  seed:
+    build:
+      context: .
+      target: toolkit
+    image: ruba-toolkit:4.6.2
+    environment:
+      DATABASE_URL: postgresql://ruba:${POSTGRES_PASSWORD:-ruba_local_only}@db:5432/ruba?schema=public
+      DIRECT_URL: postgresql://ruba:${POSTGRES_PASSWORD:-ruba_local_only}@db:5432/ruba?schema=public
+    command: ["bun", "scripts/seed.ts"]
+    profiles: ["demo"]
+    depends_on:
+      db:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  # ── المنصة ──
   ruba-pharmacy:
     build: .
-    image: ruba-pharmacy:3.0.0
+    image: ruba-pharmacy:4.6.2
     container_name: ruba-pharmacy
     ports:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      # قاعدة SQLite داخل وحدة تخزين دائمة — استبدلها بـ PostgreSQL في النشر الواسع
-      DATABASE_URL: file:/app/db/custom.db
-    volumes:
-      - ruba-db:/app/db
+      DATABASE_URL: postgresql://ruba:${POSTGRES_PASSWORD:-ruba_local_only}@db:5432/ruba?schema=public
+      DIRECT_URL: postgresql://ruba:${POSTGRES_PASSWORD:-ruba_local_only}@db:5432/ruba?schema=public
+      # إلزامي fail-closed — التشغيل يرفض البدء بلا سر توقيع الجلسات:
+      AUTH_SECRET: "${AUTH_SECRET:?AUTH_SECRET is required - export AUTH_SECRET with openssl rand -hex 32 first}"
+      # اختياري — فوترة ZATCA:
+      # ZATCA_VAT_NUMBER: "300012345600003"
+    depends_on:
+      db:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
     # لإضافة TLS خلف وكيل عكسي (Caddy/Traefik/Nginx) راجع docs/DEPLOYMENT.md
 
 volumes:
-  ruba-db:
+  pg-data:

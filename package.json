@@ -1,6 +1,6 @@
 {
   "name": "ruba-pharmacy-platform",
-  "version": "4.6.0",
+  "version": "4.6.2",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",

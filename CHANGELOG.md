@@ -4,6 +4,20 @@
 الصيغة مبنية على [Keep a Changelog](https://keepachangelog.com/ar/1.1.0/)
 والإصدارات تتبع [SemVer](https://semver.org/lang/ar/).
 
+## [4.6.2] — 2026-10-27 — «توحيد أسطح النشر على PostgreSQL»
+
+### إصلاح
+- **مسار Docker كان مكسوراً منذ v4.2**: `docker-compose.yml` و`Dockerfile` ما زالا يضبطان `DATABASE_URL=file:` (SQLite قديم) بينما المخطط `postgresql` حصرياً — الحاوية كانت ستنهار عند أول استعلام. الآن: خدمة `postgres:16-alpine` بوحدة تخزين دائمة `pg-data`، وترحيلات آلية عند كل إقلاع عبر خدمة `db-migrate` (مرحلة `toolkit` جديدة في Dockerfile — تكتمل ثم تقوم المنصة بـ `service_completed_successfully`)، و`AUTH_SECRET` مطلوب بصياغة compose (`${AUTH_SECRET:?}`) احتراماً لفشل الإغلاق الصارم.
+- **STEPS.md مرحلة أ كانت تُعلّم مساراً مستحيلاً**: `DATABASE_URL=file:/tmp/custom.db` على Vercel رغم أن DEPLOYMENT.md صُحح في 4.6.1 — أُعيدت كتابتها بمنهج Vercel+Neon الكامل (زر «Neon DB Setup» ← Import ← متغيرات البيئة الثلاثة الإلزامية: `DATABASE_URL` المجمّعة + `DIRECT_URL` المباشرة + `AUTH_SECRET`) وتحديث بديل الدوكر وقائمة الفحص.
+- **نسخ احتياطي Docker على pg_dump**: قسم المسار 2 في DEPLOYMENT.md كان ينسخ ملف SQLite (`cat /app/db/custom.db`) — أصبح `pg_dump | gzip` مع أمر استعادة كامل، وأوامر التشغيل تشمل `export AUTH_SECRET` والبذر الاختياري `docker compose run --rm seed`.
+- **قفزة نسخة مفوّتة**: `package.json` كان عالقاً على `4.6.0` رغم إصدار 4.6.1 — ضُبطت إلى `4.6.2` مع وسم صورة الدوكر `ruba-pharmacy:4.6.2`.
+- **إشارات SQLite المتقادمة**: README («Prisma 6 + SQLite جاهز للترقية» — الترقية تمت في v4.2)، وأوامر التشغيل السريع بلا `AUTH_SECRET` (كانت ستفشل مع بوابة fail-closed)، وبند EVALUATION «SQLite → PostgreSQL متبقى قراراً» — أُغلقت كلها بالأدلة، وعُدّلت أرقام الاختبارات للقيم الفعلية المقيسة (243 وحدوياً مقيساً الآن + 241 فحصاً حياً + 5 Playwright = 489).
+- **`.env` المحلي**: كان قديماً (`file:` بلا `DIRECT_URL` — يُفشل `prisma validate` وأي تشغيل محلي) — أُعيدت بنيته بplaceholders جاهزة لسلسلتي Neon (الملف gitignored ولا يتسرب).
+- بذر اختياري بلا تعقيد: خدمة `seed` (ملف تعريف `demo`) تشغّل `scripts/seed.ts` المعزول (بلا اعتماد على `src/`) بعد اكتمال الترحيلات.
+
+### القرار
+- بناء Dockerfile يحمل `DATABASE_URL` بصيغة postgresql صالحة فقط (اتصال خامل لا يُستخدم — كل المسارات ديناميكية) بدل مسار SQLite الذي لم تعد صيغته صالحة لعميل postgresql أصلاً.
+
 ## [4.6.1] — 2026-10-27 — «حزمة التشغيل: الدفع والقاعدة والنشر»
 
 ### مضاف

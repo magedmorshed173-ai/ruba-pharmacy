@@ -6,25 +6,29 @@
 
 ---
 
-## المرحلة أ — النشر الحي (Vercel) · ~10 دقائق
+## المرحلة أ — النشر الحي (Vercel + Neon) · ~10 دقائق
+
+المخطط PostgreSQL حصرياً منذ v4.2 — القاعدة سحابية على Neon (مجانية) والاستضافة على Vercel.
 
 1. ادفع مستودعك محلياً أو استخدم GitHub مباشرة (كودك جاهز على `main`).
-2. افتح **vercel.com** → سجّل الدخول بـ GitHub → **Add New… → Project** → اختر `ruba-pharmacy` → **Import**.
-3. Vercel يكتشف Next.js تلقائياً — اترك الإعدادات. في **Environment Variables** أضف متغيراً واحداً:
+2. **هيّئ قاعدة Neon أولاً**: أنشئ مشروعاً في [console.neon.tech](https://console.neon.tech) → انسخ السلسلتين (المجمّعة `-pooler` + المباشرة) → طبّق الترحيلات والبذر بأسهل طريق: زر **«Neon DB Setup»** في تبويب Actions بمستودعك (الوضع `catalog` لإنتاج نظيف) — التفاصيل في `docs/DEPLOYMENT.md` المسار 3.
+3. افتح **vercel.com** → سجّل الدخول بـ GitHub → **Add New… → Project** → اختر `ruba-pharmacy` → **Import**.
+4. Vercel يكتشف Next.js تلقائياً — اترك الإعدادات. في **Environment Variables** أضف الثلاثة الإلزامية (لكل البيئات):
    | الاسم | القيمة |
    |---|---|
-   | `DATABASE_URL` | `file:/tmp/custom.db` |
+   | `DATABASE_URL` | سلسلة Neon **المجمّعة** (`-pooler…?sslmode=require`) |
+   | `DIRECT_URL` | سلسلة Neon **المباشرة** (`?sslmode=require`) — للترحيلات |
+   | `AUTH_SECRET` | ناتج `openssl rand -hex 32` — إلزامي، بلاه يرفض الإنتاج التشغيل |
+5. **Deploy** → انتظر ~دقيقتين → احفظ الرابط: `https://your-app.vercel.app`
+6. تحقق: افتح الرابط، سجّل دخول بحساب بذرة تجريبي، وأنشئ فاتورة اختبار.
+7. (اختياري لكن موصى به للعرض) فعّل HTTPS جاهز تلقائياً — لا خطوة إضافية.
 
-   > ⚠️ ملاحظة Vercel: نظام ملفاتها مؤقت — قاعدة SQLite تُفقد عند إعادة النشر. مثالي للعرض التجريبي. للإنتاج الفعلي استخدم Docker على VPS (أدناه) أو PostgreSQL (`provider = "postgresql"` في schema + رابط Neon/Supabase).
-4. **Deploy** → انتظر ~دقيقتين → احفظ الرابط: `https://your-app.vercel.app`
-5. تحقق: افتح الرابط، سجّل دخول بحساب بذرة تجريبي، وأنشئ فاتورة اختبار.
-6. (اختياري لكن موصى به للعرض) فعّل HTTPS جاهز تلقائياً — لا خطوة إضافية.
-
-### بديل الإنتاج: Docker على VPS (بيانات دائمة)
+### بديل الإنتاج: Docker على VPS (بيانات داخل الصيدلية — PostgreSQL محلي)
 ```bash
-# على أي VPS به Docker
 git clone https://github.com/magedmorshed173-ai/ruba-pharmacy && cd ruba-pharmacy
-docker compose up -d --build      # يعمل على :3000 مع وحدة دائمة للقاعدة
+export AUTH_SECRET="$(openssl rand -hex 32)"   # إلزامي
+docker compose up -d --build      # postgres + ترحيلات آلية + المنصة على :3000
+# بيانات تجريبية اختيارية: docker compose run --rm seed
 # ضع Caddy أمامها لـ HTTPS — التفاصيل في docs/DEPLOYMENT.md
 ```
 
@@ -105,6 +109,8 @@ bash scripts/build-twa.sh
 
 ## قائمة فحص سريعة
 
+- [ ] Neon مهيأة: ترحيلات + بذر عبر زر «Neon DB Setup»
+- [ ] `DATABASE_URL` + `DIRECT_URL` + `AUTH_SECRET` مضبوطة في Vercel (الثلاثة)
 - [ ] الرابط الحي يعمل + بيع تجريبي ناجح
 - [ ] keystore محفوظ بمدير كلمات
 - [ ] AAB يُبنى بلا أخطاء

@@ -27,12 +27,18 @@
 
 ## المسار 2 — VPS / Docker (موصى به للصيدليات — بيانات داخل الصيدلية)
 
+PostgreSQL محلي داخل الـ compose — بيانات الصيدلية في وحدة تخزين دائمة `pg-data`:
+
 ```bash
-git clone https://github.com/magedmorshed173-ai/ruba-pharmacy.git
-cd ruba-pharmacy
-docker compose up -d --build
-# المنصة تعمل على http://SERVER-IP:3000 — البيانات في وحدة ruba-db الدائمة
+git clone https://github.com/magedmorshed173-ai/ruba-pharmacy.git && cd ruba-pharmacy
+export AUTH_SECRET="$(openssl rand -hex 32)"   # إلزامي — fail-closed بلا استثناء
+docker compose up -d --build                    # postgres + ترحيلات + المنصة على :3000
 ```
+
+- **أول إقلاع ذاتي التهيئة**: خدمة `db` تصبح جاهزة → `db-migrate` يطبق الترحيلات وينتهي → المنصة تقوم. صفر خطوات يدوية.
+- بيانات تجريبية (اختياري — يبذّر مستخدمين ومخزوناً ومبيعات 30 يوماً): `docker compose run --rm seed` — **أنشئ مستخدميك الحقيقيين من واجهة الإعدادات فوراً**.
+- الترقية لاحقاً: `git pull && docker compose up -d --build` — الترحيلات الجديدة تُطبق آلياً بنفس الآلية.
+- بديل Neon بدل القاعدة المحلية: استبدل متغيري `DATABASE_URL`/`DIRECT_URL` في `docker-compose.yml` بسلسلتي Neon (الاستضافة عند مزود آخر، القاعدة سحابية).
 
 ### TLS تلقائي خلف Caddy (موصى به)
 
@@ -42,13 +48,15 @@ pharmacy.example.com {
   reverse_proxy ruba-pharmacy:3000
 }
 ```
-شغّل الحاويتين على شبكة Docker واحدة — Caddy يدير الشهادات تلقائياً.
+شغّل حاويات compose وCaddy على شبكة Docker واحدة — Caddy يدير الشهادات تلقائياً.
 
 ### النسخ الاحتياطي
 
-قاعدة SQLite ملف واحد — نسخ احتياطي يومي بحجم ثوانٍ:
+PostgreSQL — نسخة SQL مضغوطة بحجم ثوانٍ:
 ```bash
-docker exec ruba-pharmacy cat /app/db/custom.db | gzip > backup-$(date +%F).db.gz
+docker compose exec db pg_dump -U ruba ruba | gzip > backup-$(date +%F).sql.gz
+# الاستعادة:
+gunzip -c backup-2026-01-01.sql.gz | docker compose exec -T db psql -U ruba ruba
 ```
 كذلك نوفر نسخاً احتياطياً JSON من داخل المنصة: الإعدادات ← النسخ الاحتياطي.
 
@@ -105,7 +113,7 @@ bun run build && bun run test:e2e   # يتطلب NEON_API_KEY في .env
 
 ### للمطورين المحليين (اختياري)
 
-بديل SQLite ما يزال مدعوماً للتطوير دون اتصال: احذف `DIRECT_URL` واجعل `DATABASE_URL=file:./db/custom.db` مع إعادة provider إلى `sqlite` — لكن التوصية الرسمية الآن Neon حتى محلياً.
+المخطط `postgresql` حصرياً منذ v4.2 — صيغة `file:` لم تعد صالحة لعميل Prisma. للتطوير بلا إنترنت شغّل Postgres محلياً بأسرع طريق: `export AUTH_SECRET="$(openssl rand -hex 32)" && docker compose up db db-migrate -d` ثم وجّه `DATABASE_URL`/`DIRECT_URL` في `.env` إليه — أو استخدم Neon مباشرة (التوصية الرسمية حتى محلياً، والطبقة المجانية كافية للتطوير).
 
 ## قائمة فحص ما قبل الإنتاج ☑️
 
