@@ -98,3 +98,35 @@ git pull && docker compose up -d --build
 ```
 سجل التغييرات لكل إصدار في `CHANGELOG.md` — راجعه قبل الترقية.
 </div>
+
+## ترحيلات Prisma — خط الأساس 0_init (v4.4.1)
+
+المشروع كان يعمل بنمط `db push` (بلا تاريخ ترحيلات) — أُنشئ الترحيل الأولي
+`prisma/migrations/0_init/migration.sql` من المخطط الحالي، وقد وُثّقت صلاحته
+بتنفيذه كاملاً في PostgreSQL (WASM/PGlite) وأنشأ 22 جدولاً بنجاح.
+
+### على قاعدة Neon الحالية (البيانات موجودة — لا تُنفَّذ، تُسجَّل فقط)
+
+```bash
+# تأكد أن .env يضم DATABASE_URL (المجمّع) وDIRECT_URL (المباشر، بلا -pooler)
+bun run db:migrate:baseline   # يسجّل 0_init كمُطبَّق — صفر لمس للبيانات
+bunx prisma migrate status    # يجب: "Database schema is up to date!"
+```
+
+### على قاعدة جديدة (فرع Neon للمطوّرين، بيئة اختبار، ...)
+
+```bash
+bun run db:migrate:deploy     # ينفّذ الترحيلات بالترتيب
+bun run scripts/seed.ts       # ثم البذر: users/categories/interactions
+bun run scripts/seed-national.ts
+bun run scripts/seed-drugs.ts
+```
+
+### قبل كل تغيير مخطط لاحق
+
+استخدم `bunx prisma migrate dev --name <وصف>` بدل `db push` — فيولّد
+ترحيلاً مرقّماً قابلاً للمراجعة والرجوع. أما `db push` فيبقى للاختبار
+السريع على قاعدة محلية مؤقتة فقط.
+
+التحقق من صحة أي ترحيل جديد بلا قاعدة حية:
+`bun run db:verify-migration` (ينفّذه في PGlite ثم ينظّف الاعتماد تلقائياً)

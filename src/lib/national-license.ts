@@ -58,6 +58,7 @@ export interface NationalEntryInput {
   barcode?: string | null;
   licenseStatus: string;
   officialPrice?: number | null; // هللات
+  withdrawalReason?: string | null; // سبب السحب (رسالة إنذار المسحوب)
 }
 
 export interface LicensedMedInput {
@@ -69,6 +70,7 @@ export interface LicensedMedInput {
   registryStatus?: string | null;
   nationalDrugId?: string | null;
   sellingPrice?: number | null;
+  maxRetailPrice?: number | null; // سقف السعر الرسمي — هللات
 }
 
 export type MatchMethod =

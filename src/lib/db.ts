@@ -34,15 +34,13 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = db;
  */
 const TX_MAX_WAIT_MS = 20_000;
 const TX_TIMEOUT_MS = 60_000;
-const baseTransaction: (
+type TransactionFn = (
   arg: unknown,
   opts?: Record<string, unknown>
-) => Promise<unknown> = (db as unknown as { $transaction: unknown })
-  .$transaction.bind(db) as never;
-(db as unknown as { $transaction: unknown }).$transaction = (
-  arg: unknown,
-  opts?: Record<string, unknown>
-) =>
+) => Promise<unknown>;
+const prismaTx = db as unknown as { $transaction: TransactionFn };
+const baseTransaction: TransactionFn = prismaTx.$transaction.bind(db);
+prismaTx.$transaction = (arg: unknown, opts?: Record<string, unknown>) =>
   baseTransaction(arg, {
     maxWait: TX_MAX_WAIT_MS,
     timeout: TX_TIMEOUT_MS,

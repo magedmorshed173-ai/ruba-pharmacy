@@ -233,10 +233,12 @@ export function ReportsView({ user }: { user: AuthUser }) {
                         tickLine={false}
                       />
                       <Tooltip
-                        formatter={(v: number | string, n) => [
-                          n === "quantity" ? `${fmtNum(Number(v))} وحدة` : `${fmtMoney(Number(v))} ر.س`,
-                          n === "quantity" ? "الكمية" : "الإيراد",
-                        ]}
+                        formatter={(v, n) =>
+                          [
+                            n === "quantity" ? `${fmtNum(Number(v))} وحدة` : `${fmtMoney(Number(v))} ر.س`,
+                            n === "quantity" ? "الكمية" : "الإيراد",
+                          ] as [string, string]
+                        }
                         contentStyle={{ borderRadius: 12, fontFamily: "inherit", direction: "rtl" }}
                       />
                       <Bar dataKey="quantity" fill="#0D9488" radius={[0, 6, 6, 0]} barSize={16} />
@@ -367,10 +369,12 @@ export function ReportsView({ user }: { user: AuthUser }) {
                       <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#6b7a7a" }} tickFormatter={(v: string) => v.slice(5)} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fontSize: 10, fill: "#6b7a7a" }} tickFormatter={(v: number) => `${Math.round(v / 100)}`} axisLine={false} tickLine={false} width={40} />
                       <Tooltip
-                        formatter={(v: number | string, n) => [
-                          `${fmtMoney(Number(v))} ر.س`,
-                          n === "revenue" ? "الإيراد" : "الربح",
-                        ]}
+                        formatter={(v, n) =>
+                          [
+                            `${fmtMoney(Number(v))} ر.س`,
+                            n === "revenue" ? "الإيراد" : "الربح",
+                          ] as [string, string]
+                        }
                         contentStyle={{ borderRadius: 12, fontFamily: "inherit", direction: "rtl" }}
                       />
                       <Legend formatter={(v) => (v === "revenue" ? "الإيراد" : "الربح")} />

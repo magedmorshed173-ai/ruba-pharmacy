@@ -23,9 +23,25 @@ export interface SessionUser {
   role: Role;
 }
 
+// ── v4.4.1 (P0): fail-closed ──
+// الإنتاج بلا AUTH_SECRET يتوقف فوراً بدل توقيع التوكنات بسرّ احتياطي
+// مكشوف في الريبو العام. الاحتياطي للتطوير فقط. استثناء phase-production-build
+// ضروري لأن next build يقيّم الوحدات مع NODE_ENV=production.
+const DEV_FALLBACK_SECRET =
+  "ruba-pharmacy-dev-secret-2026-change-in-production-0d9488";
+
+if (
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build" &&
+  !process.env.AUTH_SECRET
+) {
+  throw new Error(
+    "رفض التشغيل: AUTH_SECRET مطلوب في الإنتاج — اضبط المتغير (32+ حرفاً عشوائياً) ثم أعد التشغيل"
+  );
+}
+
 const SECRET = new TextEncoder().encode(
-  process.env.AUTH_SECRET ||
-    "ruba-pharmacy-dev-secret-2026-change-in-production-0d9488"
+  process.env.AUTH_SECRET || DEV_FALLBACK_SECRET
 );
 
 const COOKIE_NAME = "ruba_token";

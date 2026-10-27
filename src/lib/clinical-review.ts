@@ -123,10 +123,11 @@ export async function reviewCartClinical(
     new Set(cartMeds.map((m) => m.genericName.toLowerCase()).filter(Boolean))
   );
 
-  let patient = null;
-  if (patientId) {
-    patient = await db.patient.findUnique({ where: { id: patientId } });
-  }
+  // v4.4.1 (P0): تعبير شرطي واحد — النوع يستنتج Patient | null بدل null المعلنة
+  const patient = patientId
+    ? await db.patient.findUnique({ where: { id: patientId } })
+    : null;
+
   const patientGenerics = String(patient?.chronicMedications ?? "")
     .split(/[,،;؛]+/)
     .map((s) => s.trim().toLowerCase())
@@ -175,7 +176,14 @@ export async function reviewCartClinical(
   }
 
   const allergyAlerts = patient ? allergyConflicts(patient.allergies, cartMeds) : [];
-  const duplicateTherapies = duplicateTherapyGroups(cartMeds);
+  // أدوية بلا id تحصل على مفتاح احتياطي حتى لا تنهار تجميعات العلاج المكرر
+  const duplicateTherapies = duplicateTherapyGroups(
+    cartMeds.map((m, i) => ({
+      id: m.id ?? `anon-${i}`,
+      name: m.name,
+      atcClass: m.atcClass,
+    }))
+  );
 
   // الطبقة التنظيمية الوطنية — v3.7 (فوق الطبقة السريرية)
   const registryAlerts = buildRegistryAlerts(

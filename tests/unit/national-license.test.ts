@@ -21,7 +21,7 @@ import {
   type NationalEntryInput,
 } from "@/lib/national-license";
 
-const ENTRY = (over: Partial<NationalEntryInput>): NationalEntryInput => ({
+const ENTRY = (over: Partial<NationalEntryInput> = {}): NationalEntryInput => ({
   id: "nat-1",
   registrationNo: "H5-0032",
   tradeName: "زانتاك 150",
@@ -33,7 +33,7 @@ const ENTRY = (over: Partial<NationalEntryInput>): NationalEntryInput => ({
   ...over,
 });
 
-const MED = (over: Partial<LicensedMedInput>): LicensedMedInput => ({
+const MED = (over: Partial<LicensedMedInput> = {}): LicensedMedInput => ({
   id: "med-1",
   name: "زانتاك 150",
   dosage: "150 ملغ",

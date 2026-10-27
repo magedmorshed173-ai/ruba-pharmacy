@@ -115,14 +115,18 @@ interface PlanSummary {
 
 // ─── شارات الحالة ───
 const LICENSE_BADGE: Record<string, { cls: string }> = {
-  licensed:
-    "bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-400",
-  withdrawn:
-    "bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-400",
-  suspended:
-    "bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-400",
-  pending:
-    "bg-sky-100 text-sky-700 hover:bg-sky-100 dark:bg-sky-500/15 dark:text-sky-400",
+  licensed: {
+    cls: "bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-400",
+  },
+  withdrawn: {
+    cls: "bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-400",
+  },
+  suspended: {
+    cls: "bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-400",
+  },
+  pending: {
+    cls: "bg-sky-100 text-sky-700 hover:bg-sky-100 dark:bg-sky-500/15 dark:text-sky-400",
+  },
 };
 
 const METHOD_LABEL: Record<string, string> = {

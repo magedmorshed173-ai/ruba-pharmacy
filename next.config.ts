@@ -38,8 +38,10 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // v4.4.1: أخطاء الأنواع لا تُخفى بعد — البناء يفشل أمام أي خطأ tsc
+  // (كان ignoreBuildErrors: true يسمح بديون صامتة عالجناها في P0)
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   reactStrictMode: false,
   async headers() {

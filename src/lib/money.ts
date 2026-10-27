@@ -18,7 +18,7 @@ export function formatSar(halalas: number | string): string {
 
 /** جمع آمن بالهللات (أعداد صحيحة) — النتيجة عدد صحيح بلا كسور */
 export function sumHalalas(...values: (number | string)[]): number {
-  return values.reduce(
+  return values.reduce<number>(
     (acc, v) => acc + Math.round(new Decimal(v ?? 0).toNumber()),
     0
   );

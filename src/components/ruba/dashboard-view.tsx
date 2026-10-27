@@ -209,7 +209,7 @@ export function DashboardView({
                   width={40}
                 />
                 <Tooltip
-                  formatter={(v: number | string) => [`${fmtMoney(Number(v))} ر.س`, "الإيراد"]}
+                  formatter={(v) => [`${fmtMoney(Number(v))} ر.س`, "الإيراد"] as [string, string]}
                   labelFormatter={(l) => `اليوم ${l}`}
                   contentStyle={{
                     borderRadius: 12,
@@ -250,7 +250,7 @@ export function DashboardView({
                   ))}
                 </Pie>
                 <Tooltip
-                  formatter={(v: number | string, n) => [`${fmtNum(Number(v))} دواء`, String(n)]}
+                  formatter={(v, n) => [`${fmtNum(Number(v))} دواء`, String(n)] as [string, string]}
                   contentStyle={{ borderRadius: 12, fontFamily: "inherit", direction: "rtl" }}
                 />
                 <Legend
