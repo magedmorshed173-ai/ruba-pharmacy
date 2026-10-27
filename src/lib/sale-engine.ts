@@ -23,6 +23,7 @@ import {
   assertAvailable,
   mapActiveReservations,
 } from "@/lib/reservations";
+import { splitInsurancePayment } from "@/lib/insurance";
 import {
   buildSimplifiedQr,
   formatInvoiceNumber,
@@ -63,6 +64,21 @@ export interface CreateSaleParams {
    */
   excludeReservationFor?: string;
   /**
+   * v4.6 — فرع الصادر منه البيع (اختياري — يُحلّ من الموظف في المسار)
+   */
+  branchId?: string | null;
+  /**
+   * v4.6 — تأمين طبي: تقسيم المطلوب وفتح مطالبة تلقائية.
+   * تُحلّ البوليصة وتُفحص صلاحيتها في المسار (خدمياً — لا تُؤمَن قيم العميل)،
+   * والمحرك يعتمد القيم المحسوبة ويربطها بالفاتورة.
+   */
+  insurance?: {
+    policyId: string;
+    providerId: string;
+    coverageBps: number;
+    copayFixed?: number | null;
+  };
+  /**
    * خطاف داخل المعاملة قبل الالتزام — يربط أثراً إضافياً بنفس الذرية
    * (مثال: تحويل حالة الوصفة إلى dispensed مع ربط saleId)
    */
@@ -85,6 +101,10 @@ export interface SaleResult {
   netOfVat: number;
   invoiceNumber: string | null;
   zatcaQr: string | null;
+  /** v4.6 — التأمين: تقسيم المطلوب وحالة المطالبة */
+  insurerAmount: number;
+  patientAmount: number;
+  claimStatus: string | null;
 }
 
 /** مراجعة سريرية لبنود بيع/وصفة — تُستدعى قبل الإتمام وفي تفاصيل طابور التحقق */
@@ -283,6 +303,12 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
       if (discount > total) throw new Error("الخصم أكبر من الإجمالي");
       const net = total - discount;
 
+      // ── v4.6 — التأمين: تقسيم المطلوب + فتح مطالبة تلقائياً ──
+      const ins = params.insurance;
+      const split = ins
+        ? splitInsurancePayment(net, ins.coverageBps, ins.copayFixed)
+        : { insurerDue: 0, patientDue: net };
+
       // ── v4.5 — ZATCA: الضريبة ضمن الإجمالي + ترقيم تسلسلي ذري ──
       const vatRate = params.zatca?.vatRate ?? ZATCA_VAT_RATE;
       const vatTotal = vatFromInclusive(net, vatRate);
@@ -324,6 +350,12 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
                 vatHalalas: vatTotal,
               })
             : null,
+          insuranceProviderId: ins?.providerId ?? null,
+          insurancePolicyId: ins?.policyId ?? null,
+          insurerAmount: split.insurerDue,
+          patientAmount: split.patientDue,
+          claimStatus: ins ? "pending" : null,
+          branchId: params.branchId ?? null,
           items: {
             create: prepared.map((p) => ({
               medicineId: p.medicineId,
@@ -408,6 +440,9 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
         vatRate,
         vatTotal,
         netOfVat: netOfVatValue,
+        insurerAmount: split.insurerDue,
+        patientAmount: split.patientDue,
+        claimStatus: ins ? "pending" : null,
       };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
@@ -423,5 +458,8 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
     netOfVat: txResult.netOfVat,
     invoiceNumber: txResult.invoiceNumber,
     zatcaQr: txResult.zatcaQr,
+    insurerAmount: txResult.insurerAmount,
+    patientAmount: txResult.patientAmount,
+    claimStatus: txResult.claimStatus,
   };
 }

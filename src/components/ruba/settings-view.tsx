@@ -18,7 +18,28 @@ import {
   Info,
   Loader2,
   KeyRound,
+  Landmark,
+  Building2,
+  Plus,
 } from "lucide-react";
+
+interface ProviderRow {
+  id: string;
+  name: string;
+  code: string | null;
+  phone: string | null;
+  isActive: boolean;
+  _count: { policies: number; sales: number };
+}
+interface BranchRow {
+  id: string;
+  name: string;
+  code: string | null;
+  phone: string | null;
+  address: string | null;
+  isActive: boolean;
+  _count: { users: number; sales: number };
+}
 
 export function SettingsView({
   user,
@@ -35,6 +56,99 @@ export function SettingsView({
   const [setupSecret, setSetupSecret] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [busy2fa, setBusy2fa] = useState(false);
+
+  // ── v4.6 — شركات التأمين والفروع (إدارة المدير) ──
+  const isAdmin = user.role === "admin";
+  const [providers, setProviders] = useState<ProviderRow[] | null>(null);
+  const [provForm, setProvForm] = useState({ name: "", code: "", phone: "" });
+  const [provSaving, setProvSaving] = useState(false);
+  const [branches, setBranches] = useState<BranchRow[] | null>(null);
+  const [branchForm, setBranchForm] = useState({ name: "", code: "", phone: "", address: "" });
+  const [branchSaving, setBranchSaving] = useState(false);
+
+  const loadProviders = useCallback(async () => {
+    try {
+      const r = await api<{ providers: ProviderRow[] }>("/api/insurance/providers");
+      setProviders(r.providers);
+    } catch {
+      setProviders([]);
+    }
+  }, []);
+
+  const loadBranches = useCallback(async () => {
+    try {
+      const r = await api<{ branches: BranchRow[] }>("/api/branches");
+      setBranches(r.branches);
+    } catch {
+      setBranches([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    void loadProviders();
+    void loadBranches();
+  }, [isAdmin, loadProviders, loadBranches]);
+
+  async function addProvider() {
+    if (!provForm.name.trim()) {
+      toast.error("اسم الشركة مطلوب");
+      return;
+    }
+    setProvSaving(true);
+    try {
+      await api("/api/insurance/providers", { method: "POST", json: provForm });
+      toast.success("تمت إضافة شركة التأمين");
+      setProvForm({ name: "", code: "", phone: "" });
+      await loadProviders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر الإضافة");
+    } finally {
+      setProvSaving(false);
+    }
+  }
+
+  async function toggleProvider(row: ProviderRow) {
+    try {
+      await api(`/api/insurance/providers/${row.id}`, {
+        method: "PATCH",
+        json: { isActive: !row.isActive },
+      });
+      await loadProviders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر التحديث");
+    }
+  }
+
+  async function addBranch() {
+    if (!branchForm.name.trim()) {
+      toast.error("اسم الفرع مطلوب");
+      return;
+    }
+    setBranchSaving(true);
+    try {
+      await api("/api/branches", { method: "POST", json: branchForm });
+      toast.success("تمت إضافة الفرع — عيّنه للموظفين من تبويب المستخدمين");
+      setBranchForm({ name: "", code: "", phone: "", address: "" });
+      await loadBranches();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر الإضافة");
+    } finally {
+      setBranchSaving(false);
+    }
+  }
+
+  async function toggleBranch(row: BranchRow) {
+    try {
+      await api(`/api/branches/${row.id}`, {
+        method: "PATCH",
+        json: { isActive: !row.isActive },
+      });
+      await loadBranches();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر التحديث");
+    }
+  }
 
   const load2fa = useCallback(async () => {
     try {
@@ -238,6 +352,183 @@ export function SettingsView({
         </div>
       </div>
 
+      {/* شركات التأمين والفروع — إدارة (v4.6) */}
+      {isAdmin && (
+        <>
+          <div className="rounded-xl border bg-card p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">
+                <Landmark className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-bold">شركات التأمين</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  الشركات المتعامل معها — إيقاف شركة يحجب بوليصاتها من نقطة البيع فوراً
+                  (البوليصات تُدار من تبويب المرضى).
+                </p>
+                <div className="mt-3 space-y-2">
+                  {providers === null ? (
+                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  ) : providers.length === 0 ? (
+                    <p className="rounded-lg border bg-muted/40 p-3 text-center text-xs text-muted-foreground">
+                      لا شركات تأمين بعد — أضف أول شركة
+                    </p>
+                  ) : (
+                    providers.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border bg-muted/30 p-2.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
+                            {p.name}
+                            {p.code && (
+                              <span className="num ms-2 text-[10px] font-normal text-muted-foreground" dir="ltr">
+                                {p.code}
+                              </span>
+                            )}
+                            {!p.isActive && (
+                              <span className="ms-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-500/20 dark:text-slate-400">
+                                موقوفة
+                              </span>
+                            )}
+                          </p>
+                          <p className="num text-[11px] text-muted-foreground">
+                            {p._count.policies} بوليصة · {p._count.sales} فاتورة تأمين
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="shrink-0 text-xs"
+                          onClick={() => toggleProvider(p)}
+                        >
+                          {p.isActive ? "إيقاف" : "تفعيل"}
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <Input
+                    placeholder="اسم الشركة *"
+                    value={provForm.name}
+                    onChange={(e) => setProvForm({ ...provForm, name: e.target.value })}
+                  />
+                  <Input
+                    placeholder="رمز التعامل"
+                    value={provForm.code}
+                    onChange={(e) => setProvForm({ ...provForm, code: e.target.value })}
+                    dir="ltr"
+                  />
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="هاتف"
+                      value={provForm.phone}
+                      onChange={(e) => setProvForm({ ...provForm, phone: e.target.value })}
+                      dir="ltr"
+                    />
+                    <Button
+                      onClick={addProvider}
+                      disabled={provSaving}
+                      className="shrink-0 bg-emerald-600 hover:bg-emerald-700"
+                    >
+                      {provSaving ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border bg-card p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400">
+                <Building2 className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-bold">الفروع</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  وحدات التقرير والربط — كل فاتورة تُسجّل على فرع موظفها، وتقارير المبيعات
+                  تُفلتر بالفرع. المخزون مركزي واحد (قرار v4.6).
+                </p>
+                <div className="mt-3 space-y-2">
+                  {branches === null ? (
+                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  ) : branches.length === 0 ? (
+                    <p className="rounded-lg border bg-muted/40 p-3 text-center text-xs text-muted-foreground">
+                      لا فروع بعد — أضف الفرع الرئيسي أولاً
+                    </p>
+                  ) : (
+                    branches.map((b) => (
+                      <div
+                        key={b.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border bg-muted/30 p-2.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
+                            {b.name}
+                            {b.code && (
+                              <span className="num ms-2 text-[10px] font-normal text-muted-foreground" dir="ltr">
+                                {b.code}
+                              </span>
+                            )}
+                            {!b.isActive && (
+                              <span className="ms-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-500/20 dark:text-slate-400">
+                                موقوف
+                              </span>
+                            )}
+                          </p>
+                          <p className="num text-[11px] text-muted-foreground">
+                            {b._count.users} موظف · {b._count.sales} فاتورة
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="shrink-0 text-xs"
+                          onClick={() => toggleBranch(b)}
+                        >
+                          {b.isActive ? "إيقاف" : "تفعيل"}
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <Input
+                    placeholder="اسم الفرع *"
+                    value={branchForm.name}
+                    onChange={(e) => setBranchForm({ ...branchForm, name: e.target.value })}
+                  />
+                  <Input
+                    placeholder="رمز الفرع"
+                    value={branchForm.code}
+                    onChange={(e) => setBranchForm({ ...branchForm, code: e.target.value })}
+                    dir="ltr"
+                  />
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="هاتف الفرع"
+                      value={branchForm.phone}
+                      onChange={(e) => setBranchForm({ ...branchForm, phone: e.target.value })}
+                      dir="ltr"
+                    />
+                    <Button
+                      onClick={addBranch}
+                      disabled={branchSaving}
+                      className="shrink-0 bg-amber-600 hover:bg-amber-700"
+                    >
+                      {branchSaving ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* النسخ الاحتياطي */}
       <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="flex items-start gap-3">
@@ -267,8 +558,9 @@ export function SettingsView({
           <div className="flex-1 text-sm">
             <h3 className="font-bold">عن ربي فارمسي</h3>
             <p className="mt-1 leading-relaxed text-muted-foreground">
-              منصة ويب عربية متكاملة لإدارة الصيدليات — إصدار 4.5. تشمل نقطة بيع ذرّية
-              آمنة مع Idempotency وفوترة ZATCA ضريبية، مخزوناً بسجل تدقيق كامل،
+              منصة ويب عربية متكاملة لإدارة الصيدليات — إصدار 4.6. تشمل نقطة بيع ذرّية
+              آمنة مع Idempotency وفوترة ZATCA ضريبية وتأميناً طبياً بتقسيم حصص
+              المؤمن والمريض، مخزوناً بسجل تدقيق كامل وتعدد فروع،
               سجلاً وطنياً مرخصاً SFDA، فحص تداخلات دوائية، تنبؤاً ذكياً بإعادة الطلب،
               وتحققاً بخطوتين وصلاحيات مبنية على الأدوار.
             </p>

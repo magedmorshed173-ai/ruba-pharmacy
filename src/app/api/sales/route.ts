@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { fail, ok, requireAuth } from "@/lib/api-guard";
 import { toInt } from "@/lib/money";
 import { zatcaSellerFromEnv } from "@/lib/zatca";
+import { assertPolicyUsable, POLICY_BLOCK_LABEL } from "@/lib/insurance";
 import {
   createSale,
   parseSaleItems,
@@ -78,9 +79,62 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const paymentMethod = ["cash", "card", "insurance"].includes(body.paymentMethod)
+    const paymentMethodRaw = ["cash", "card", "insurance"].includes(body.paymentMethod)
       ? body.paymentMethod
       : "cash";
+
+    // ── v4.6 — التأمين: حلّ البوليصة خدمياً (لا تُؤمَن قيم العميل) ──
+    let insurance: Parameters<typeof createSale>[0]["insurance"];
+    const rawPolicyId = String(body.insurancePolicyId ?? "").trim();
+    if (rawPolicyId || paymentMethodRaw === "insurance") {
+      if (!patientId)
+        return fail("البيع بالتأمين يتطلب اختيار مريض أولاً", 409);
+      if (!rawPolicyId)
+        return fail("اختر بوليصة تأمين صالحة للبيع بالتأمين", 409);
+      const policy = await db.patientInsurancePolicy.findUnique({
+        where: { id: rawPolicyId },
+        include: { provider: { select: { id: true, isActive: true, name: true } } },
+      });
+      if (!policy) return fail("بوليصة التأمين غير موجودة", 404);
+      if (policy.patientId !== patientId)
+        return fail("البوليصة مسجّلة على مريض آخر — اختر مريض البوليصة نفسه", 409);
+      if (!policy.provider.isActive)
+        return fail(
+          `شركة التأمين «${policy.provider.name}» موقوفة عن التعامل`,
+          409
+        );
+      const block = assertPolicyUsable({
+        isActive: policy.isActive,
+        expiryDate: policy.expiryDate,
+        coverageBps: policy.coverageBps,
+        copayFixed: policy.copayFixed,
+      });
+      if (block)
+        return fail(POLICY_BLOCK_LABEL[block], 409, { policyBlock: block });
+      insurance = {
+        policyId: policy.id,
+        providerId: policy.providerId,
+        coverageBps: policy.coverageBps,
+        copayFixed: policy.copayFixed,
+      };
+    }
+    const paymentMethod = insurance ? "insurance" : paymentMethodRaw;
+
+    // ── v4.6 — الفرع: فرع الموظف من القاعدة (حديث دائماً)، والإدارة قد تحدد غيره ──
+    let branchId: string | null = null;
+    const dbUser = await db.user.findUnique({
+      where: { id: user.id },
+      select: { branchId: true },
+    });
+    branchId = dbUser?.branchId ?? null;
+    if (user.role === "admin" && String(body.branchId ?? "").trim()) {
+      const b = await db.branch.findUnique({
+        where: { id: String(body.branchId).trim() },
+        select: { isActive: true },
+      });
+      if (!b) return fail("الفرع غير موجود", 404);
+      branchId = b.isActive ? String(body.branchId).trim() : null;
+    }
 
     try {
       const result = await createSale({
@@ -93,6 +147,8 @@ export async function POST(request: NextRequest) {
         customerPhone: String(body.customerPhone ?? "").trim() || null,
         paymentMethod,
         userId: user.id,
+        branchId,
+        insurance,
         // v4.5 — فاتورة ZATCA تلقائياً متى صار الرقم الضريبي مضبوطاً في البيئة
         zatca: zatcaSellerFromEnv()
           ? { seller: zatcaSellerFromEnv()! }

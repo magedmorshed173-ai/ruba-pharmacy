@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, fmtDate, SEVERITY_LABEL } from "@/lib/api-client";
+import { api, fmtDate, fmtMoney, SEVERITY_LABEL } from "@/lib/api-client";
 import type { AuthUser, Patient, InteractionHit } from "@/lib/types";
 import { ageInYears, PREGNANCY_STATUS_LABEL } from "@/lib/patient-gate";
 import { EmptyState, LoadingRows } from "./shared";
@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { coveragePercentLabel } from "@/lib/insurance"; // v4.6
 import {
   Search,
   Plus,
@@ -35,6 +36,7 @@ import {
   UsersRound,
   ShieldAlert,
   Stethoscope,
+  ShieldCheck,
 } from "lucide-react";
 
 const RANK: Record<string, number> = { technician: 1, pharmacist: 2, admin: 3 };
@@ -46,6 +48,32 @@ const EMPTY = {
   allergies: "",
   dateOfBirth: "",
   pregnancyStatus: "none",
+};
+
+/** بوليصة كما تعود من /api/insurance/policies — v4.6 */
+interface PolicyRow {
+  id: string;
+  policyNumber: string;
+  holderName: string | null;
+  coverageBps: number;
+  copayFixed: number | null;
+  expiryDate: string | null;
+  isActive: boolean;
+  provider: { id: string; name: string; code: string | null };
+}
+interface ProviderLite {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+const POLICY_EMPTY = {
+  providerId: "",
+  policyNumber: "",
+  holderName: "",
+  coveragePercent: "70",
+  copayFixed: "",
+  expiryDate: "",
+  notes: "",
 };
 
 export function PatientsView({ user }: { user: AuthUser }) {
@@ -62,6 +90,15 @@ export function PatientsView({ user }: { user: AuthUser }) {
   const [checkText, setCheckText] = useState("");
   const [checkResults, setCheckResults] = useState<InteractionHit[] | null>(null);
   const [checking, setChecking] = useState(false);
+
+  // ── v4.6 — بوليصات التأمين للمريض ──
+  const canManagePolicies = (RANK[user.role] ?? 0) >= 2;
+  const [polOpen, setPolOpen] = useState(false);
+  const [polPatient, setPolPatient] = useState<Patient | null>(null);
+  const [polList, setPolList] = useState<PolicyRow[] | null>(null);
+  const [providers, setProviders] = useState<ProviderLite[]>([]);
+  const [polForm, setPolForm] = useState({ ...POLICY_EMPTY });
+  const [polSaving, setPolSaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -151,6 +188,78 @@ export function PatientsView({ user }: { user: AuthUser }) {
       toast.error(e instanceof Error ? e.message : "تعذر الفحص");
     } finally {
       setChecking(false);
+    }
+  }
+
+  // ── v4.6 — فتح بطاقة التأمين لمريض: البوليصات + شركات التأمين ──
+  async function loadPolicies(patientId: string) {
+    try {
+      const r = await api<{ policies: PolicyRow[] }>(
+        `/api/insurance/policies?patientId=${encodeURIComponent(patientId)}`
+      );
+      setPolList(r.policies);
+    } catch {
+      setPolList([]);
+    }
+  }
+
+  function openPolicies(p: Patient) {
+    setPolPatient(p);
+    setPolList(null);
+    setPolForm({ ...POLICY_EMPTY });
+    setPolOpen(true);
+    loadPolicies(p.id);
+    api<{ providers: ProviderLite[] }>("/api/insurance/providers?active=1")
+      .then((r) => setProviders(r.providers ?? []))
+      .catch(() => setProviders([]));
+  }
+
+  async function addPolicy() {
+    if (!polPatient) return;
+    if (!polForm.providerId || !polForm.policyNumber.trim()) {
+      toast.error("اختر الشركة وأدخل رقم البوليصة");
+      return;
+    }
+    const bps = Math.round(parseFloat(polForm.coveragePercent || "0") * 100);
+    if (!Number.isFinite(bps) || bps < 0 || bps > 10000) {
+      toast.error("نسبة التغطية يجب أن تكون بين 0 و100");
+      return;
+    }
+    setPolSaving(true);
+    try {
+      await api("/api/insurance/policies", {
+        method: "POST",
+        json: {
+          patientId: polPatient.id,
+          providerId: polForm.providerId,
+          policyNumber: polForm.policyNumber.trim(),
+          holderName: polForm.holderName.trim(),
+          coverageBps: bps,
+          copayFixed: polForm.copayFixed === "" ? null : Math.round(parseFloat(polForm.copayFixed) * 100),
+          expiryDate: polForm.expiryDate || null,
+          notes: polForm.notes.trim(),
+        },
+      });
+      toast.success("تمت إضافة البوليصة");
+      setPolForm({ ...POLICY_EMPTY });
+      loadPolicies(polPatient.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر إضافة البوليصة");
+    } finally {
+      setPolSaving(false);
+    }
+  }
+
+  async function togglePolicy(row: PolicyRow) {
+    if (!polPatient) return;
+    try {
+      await api(`/api/insurance/policies/${row.id}`, {
+        method: "PATCH",
+        json: { isActive: !row.isActive },
+      });
+      loadPolicies(polPatient.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر التحديث");
     }
   }
 
@@ -246,6 +355,17 @@ export function PatientsView({ user }: { user: AuthUser }) {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
+                      {canManagePolicies && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 text-emerald-600 hover:text-emerald-700"
+                          title="بوليصات التأمين"
+                          onClick={() => openPolicies(p)}
+                        >
+                          <ShieldCheck className="size-3.5" />
+                        </Button>
+                      )}
                       <Button variant="ghost" size="icon" className="size-8" onClick={() => openEdit(p)}>
                         <Pencil className="size-3.5" />
                       </Button>
@@ -404,6 +524,144 @@ export function PatientsView({ user }: { user: AuthUser }) {
                 </div>
               ))}
           </div>
+        </DialogContent>
+      </Dialog>
+      {/* نافذة بوليصات التأمين للمريض — v4.6 */}
+      <Dialog open={polOpen} onOpenChange={setPolOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="size-5 text-emerald-600" />
+              بوليصات التأمين — {polPatient?.name}
+            </DialogTitle>
+            <DialogDescription>
+              البوليصات المفعّلة تظهر في نقطة البيع عند الدفع بالتأمين — تُحسب حصة المؤمن والمريض آلياً
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* البوليصات الحالية */}
+          <div className="space-y-2">
+            {polList === null ? (
+              <div className="flex justify-center py-6">
+                <Loader2 className="size-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : polList.length === 0 ? (
+              <p className="rounded-lg border bg-muted/40 p-4 text-center text-sm text-muted-foreground">
+                لا بوليصات مسجّلة لهذا المريض بعد
+              </p>
+            ) : (
+              polList.map((row) => (
+                <div
+                  key={row.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold">
+                      {row.provider.name}
+                      <span className="num ms-2 text-xs font-normal text-muted-foreground" dir="ltr">
+                        {row.policyNumber}
+                      </span>
+                      {!row.isActive && (
+                        <span className="ms-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-500/20 dark:text-slate-400">
+                          موقوفة
+                        </span>
+                      )}
+                    </p>
+                    <p className="num mt-0.5 text-xs text-muted-foreground">
+                      تغطية {coveragePercentLabel(row.coverageBps)}
+                      {row.copayFixed ? ` · مشاركة ثابتة ${fmtMoney(row.copayFixed)} ر.س` : ""}
+                      {row.expiryDate ? ` · تنتهي ${fmtDate(row.expiryDate)}` : " · بلا انتهاء"}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0 text-xs"
+                    onClick={() => togglePolicy(row)}
+                  >
+                    {row.isActive ? "إيقاف" : "تفعيل"}
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* إضافة بوليصة */}
+          {canManagePolicies && (
+            <div className="space-y-3 rounded-lg border-t pt-3">
+              <p className="text-sm font-bold">إضافة بوليصة جديدة</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>شركة التأمين *</Label>
+                  <select
+                    className="h-9 w-full rounded-md border bg-card px-3 text-sm"
+                    value={polForm.providerId}
+                    onChange={(e) => setPolForm({ ...polForm, providerId: e.target.value })}
+                  >
+                    <option value="">— اختر الشركة —</option>
+                    {providers.map((pr) => (
+                      <option key={pr.id} value={pr.id}>
+                        {pr.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>رقم البوليصة *</Label>
+                  <Input
+                    value={polForm.policyNumber}
+                    onChange={(e) => setPolForm({ ...polForm, policyNumber: e.target.value })}
+                    dir="ltr"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>نسبة التغطية %</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={polForm.coveragePercent}
+                    onChange={(e) => setPolForm({ ...polForm, coveragePercent: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>مشاركة ثابتة (ر.س)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={polForm.copayFixed}
+                    onChange={(e) => setPolForm({ ...polForm, copayFixed: e.target.value })}
+                    placeholder="اختياري"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>صاحب البوليصة</Label>
+                  <Input
+                    value={polForm.holderName}
+                    onChange={(e) => setPolForm({ ...polForm, holderName: e.target.value })}
+                    placeholder="إن كان المريض مستفيداً غير أساسي"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>تاريخ الانتهاء</Label>
+                  <Input
+                    type="date"
+                    value={polForm.expiryDate}
+                    onChange={(e) => setPolForm({ ...polForm, expiryDate: e.target.value })}
+                  />
+                </div>
+              </div>
+              <Button
+                onClick={addPolicy}
+                disabled={polSaving}
+                className="w-full bg-emerald-600 hover:bg-emerald-700"
+              >
+                {polSaving ? <Loader2 className="size-4 animate-spin" /> : "إضافة البوليصة"}
+              </Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

@@ -10,6 +10,12 @@ import type {
   Patient,
 } from "@/lib/types";
 import type { AlternativeSuggestion } from "@/lib/alternatives";
+import {
+  assertPolicyUsable,
+  coveragePercentLabel,
+  POLICY_BLOCK_LABEL,
+  splitInsurancePayment,
+} from "@/lib/insurance"; // v4.6 — تقسيم التأمين (نقية تعمل على العميل والخادم)
 import { StockBadge, ExpiryBadge } from "./shared";
 import { BarcodeScanner } from "./barcode-scanner";
 import { Button } from "@/components/ui/button";
@@ -84,6 +90,9 @@ interface SaleFull {
   netOfVat: number;
   invoiceNumber: string | null;
   zatcaQr: string | null;
+  // ── v4.6 — التأمين ──
+  insurerAmount: number;
+  patientAmount: number;
   items: SaleFullItem[];
   user?: { username: string; fullName: string };
 }
@@ -97,6 +106,17 @@ interface CheckoutResult {
   clinicalReview?: ClinicalReview;
   clinicalOverride?: boolean;
   sale?: SaleFull;
+}
+
+/** بوليصة تأمين كما تعود من /api/insurance/policies — v4.6 */
+interface PolicyLite {
+  id: string;
+  policyNumber: string;
+  coverageBps: number;
+  copayFixed: number | null;
+  expiryDate: string | null;
+  isActive: boolean;
+  provider: { id: string; name: string };
 }
 
 /** أنماط شارات الشدة السريرية */
@@ -141,6 +161,10 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
   const [blocked, setBlocked] = useState<ClinicalReview | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientId, setPatientId] = useState("none");
+  // ── v4.6 — التأمين الطبي ──
+  const [policies, setPolicies] = useState<PolicyLite[]>([]);
+  const [policyId, setPolicyId] = useState("none");
+  const [policiesLoading, setPoliciesLoading] = useState(false);
   const [result, setResult] = useState<CheckoutResult | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -173,6 +197,26 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
     );
     return { total, discount, net: total - discount };
   }, [cart, discountSar]);
+
+  // ── v4.6 — التأمين: البوليصة المختارة وصلاحيتها وتقسيم المطلوب ──
+  const insuranceMode = payment === "insurance";
+  const selectedPolicy = policies.find((p) => p.id === policyId) ?? null;
+  const policyBlock = selectedPolicy
+    ? assertPolicyUsable({
+        isActive: selectedPolicy.isActive,
+        expiryDate: selectedPolicy.expiryDate,
+        coverageBps: selectedPolicy.coverageBps,
+        copayFixed: selectedPolicy.copayFixed,
+      })
+    : null;
+  const insuranceSplit = useMemo(() => {
+    if (!insuranceMode || !selectedPolicy || policyBlock) return null;
+    return splitInsurancePayment(
+      totals.net,
+      selectedPolicy.coverageBps,
+      selectedPolicy.copayFixed
+    );
+  }, [insuranceMode, selectedPolicy, policyBlock, totals.net]);
 
   function addToCart(m: Medicine) {
     setCart((prev) => {
@@ -227,6 +271,20 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
       .catch(() => {});
   }, []);
 
+  // v4.6 — بوليصات المريض المختار: تُجلب وتُصفّر عند تغيير المريض
+  useEffect(() => {
+    setPolicyId("none");
+    setPolicies([]);
+    if (patientId === "none") return;
+    setPoliciesLoading(true);
+    api<{ policies: PolicyLite[] }>(
+      `/api/insurance/policies?patientId=${encodeURIComponent(patientId)}&active=1`
+    )
+      .then((r) => setPolicies(r.policies ?? []))
+      .catch(() => setPolicies([]))
+      .finally(() => setPoliciesLoading(false));
+  }, [patientId]);
+
   useEffect(() => {
     if (cart.length >= 1) checkInteractions();
     else setReview(null);
@@ -241,6 +299,10 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
       toast.error("أنت دون اتصال — أعد المحاولة عند عودة الشبكة");
       return;
     }
+    if (insuranceMode && (!selectedPolicy || policyBlock)) {
+      toast.error("اختر بوليصة تأمين صالحة للمريض أولاً");
+      return;
+    }
     setChecking(true);
     try {
       const r = await api<CheckoutResult>("/api/sales", {
@@ -253,6 +315,9 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
           customerPhone: customerPhone.trim(),
           transactionId: `POS-${Date.now()}-${user.username}`,
           patientId: patientId !== "none" ? patientId : undefined,
+          ...(insuranceMode && selectedPolicy
+            ? { insurancePolicyId: selectedPolicy.id }
+            : {}),
           ...(clinicalOverride ? { clinicalOverride: true } : {}),
         },
       });
@@ -714,6 +779,46 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
             </div>
           </div>
 
+          {/* v4.6 — اختيار بوليصة التأمين عند الدفع بالتأمين */}
+          {insuranceMode && (
+            <div>
+              <Label className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+                <ShieldCheck className="size-3.5" />
+                بوليصة التأمين — للمريض المختار أعلاه
+              </Label>
+              {patientId === "none" ? (
+                <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400">
+                  اختر مريضاً مسجلاً أولاً — البيع بالتأمين يتطلب ملف مريض وبوليصة
+                </p>
+              ) : policiesLoading ? (
+                <Skeleton className="h-9 w-full" />
+              ) : policies.length === 0 ? (
+                <p className="rounded-lg border bg-muted/50 p-2 text-xs text-muted-foreground">
+                  لا بوليصات مفعّلة لهذا المريض — أضفها من تبويب المرضى &gt; بطاقة التأمين
+                </p>
+              ) : (
+                <Select value={policyId} onValueChange={setPolicyId}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="اختر البوليصة" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">— بلا بوليصة —</SelectItem>
+                    {policies.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.provider.name} · {p.policyNumber} · تغطية {coveragePercentLabel(p.coverageBps)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {policyBlock && selectedPolicy && (
+                <p className="mt-1 rounded-lg border border-rose-300 bg-rose-50 p-2 text-xs font-bold text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-400">
+                  {POLICY_BLOCK_LABEL[policyBlock]} — أوقف الدفع بالتأمين أو أضف بوليصة أخرى
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="space-y-1 rounded-lg bg-muted/50 p-3 text-sm">
             <div className="flex justify-between text-muted-foreground">
               <span>الإجمالي</span>
@@ -729,11 +834,31 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
                 {fmtMoney(totals.net)} ر.س
               </span>
             </div>
+            {insuranceSplit && selectedPolicy && (
+              <>
+                <div className="flex justify-between border-t pt-1.5 text-emerald-700 dark:text-emerald-400">
+                  <span className="flex items-center gap-1">
+                    <ShieldCheck className="size-3.5" />
+                    حصة المؤمن ({selectedPolicy.provider.name} · {coveragePercentLabel(selectedPolicy.coverageBps)})
+                  </span>
+                  <span className="num font-bold">{fmtMoney(insuranceSplit.insurerDue)} ر.س</span>
+                </div>
+                <div className="flex justify-between text-amber-700 dark:text-amber-400">
+                  <span>حصة المريض (المستحقّة الآن)</span>
+                  <span className="num font-bold">{fmtMoney(insuranceSplit.patientDue)} ر.س</span>
+                </div>
+              </>
+            )}
           </div>
 
           <Button
             onClick={() => checkout(!!blocked)}
-            disabled={checking || cart.length === 0 || (!!blocked && user.role === "technician")}
+            disabled={
+              checking ||
+              cart.length === 0 ||
+              (!!blocked && user.role === "technician") ||
+              (insuranceMode && (!selectedPolicy || !!policyBlock))
+            }
             className={
               blocked && user.role !== "technician"
                 ? "h-11 w-full bg-rose-600 text-base font-bold hover:bg-rose-700"
@@ -830,6 +955,18 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
                       <span>ضريبة القيمة المضافة ({result.sale.vatRate}%) — ضمن الإجمالي</span>
                       <span className="num">{fmtMoney(result.sale.vatTotal)} ر.س</span>
                     </div>
+                    {result.sale.paymentMethod === "insurance" && (
+                      <>
+                        <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
+                          <span>حصة المؤمن — مطالبة مفتوحة</span>
+                          <span className="num">{fmtMoney(result.sale.insurerAmount)} ر.س</span>
+                        </div>
+                        <div className="flex justify-between text-amber-700 dark:text-amber-400">
+                          <span>حصة المريض — المستحقّة الآن</span>
+                          <span className="num">{fmtMoney(result.sale.patientAmount)} ر.س</span>
+                        </div>
+                      </>
+                    )}
                     <div className="flex justify-between text-base font-extrabold">
                       <span>الإجمالي المدفوع ({result.sale.paymentMethod === "cash" ? "نقدي" : result.sale.paymentMethod === "card" ? "شبكة" : "تأمين"})</span>
                       <span className="num">{fmtMoney(result.sale.netAmount)} ر.س</span>

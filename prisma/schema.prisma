@@ -32,6 +32,10 @@ model User {
   totpSecret  String? // Base32 — يُعرض فقط في مسار التهيئة
   totpEnabled Boolean @default(false)
 
+  // ── v4.6 — الفرع الذي يعمل منه الموظف (اختياري — صلاحية العرض والتقارير) ──
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
   sales          Sale[]
   stockMovements StockMovement[]
   sessions         Session[]
@@ -282,6 +286,20 @@ model Sale {
   invoiceNumber String? @unique       // الترقيم التسلسلي الإلزامي INV-2026-000001
   zatcaQr       String?               // TLV Base64 — رمز الفاتورة المبسطة (المرحلة الأولى)
 
+  // ── v4.6 — التأمين الطبي: تقسيم المطلوب على السطر المالي ──
+  insuranceProviderId String?                 // شركة التأمين
+  insuranceProvider   InsuranceProvider?      @relation(fields: [insuranceProviderId], references: [id])
+  insurancePolicyId   String?                 // بوليصة المريض المستخدمة
+  insurancePolicy     PatientInsurancePolicy? @relation(fields: [insurancePolicyId], references: [id])
+  insurerAmount       Int     @default(0)     // حصة المؤمن — هللات
+  patientAmount       Int     @default(0)     // حصة المريض — هللات (insurer + patient = netAmount)
+  claimStatus         String?                 // pending | approved | rejected | paid — يُفتح تلقائياً عند البيع بالتأمين
+  claimUpdatedAt      DateTime?
+
+  // ── v4.6 — الفرع الصادر منه البيع ──
+  branchId    String?
+  branch      Branch? @relation(fields: [branchId], references: [id])
+
   saleDate         DateTime @default(now())
 
   items SaleItem[]
@@ -289,6 +307,9 @@ model Sale {
   @@index([saleDate])
   @@index([userId])
   @@index([status])
+  @@index([branchId, saleDate])
+  @@index([claimStatus])
+  @@index([insuranceProviderId])
 }
 
 model SaleItem {
@@ -380,6 +401,8 @@ model Patient {
   dateOfBirth        DateTime? // تاريخ الميلاد — أساس فحص الحد الأدنى للعمر (v4.3)
   pregnancyStatus    String   @default("none") // none | pregnant | breastfeeding — بوابة الحمل (v4.3)
   createdAt          DateTime @default(now())
+
+  policies PatientInsurancePolicy[]
 
   @@index([name])
   @@index([phone])
@@ -494,4 +517,67 @@ model RateLimit {
   key         String   @id
   count       Int      @default(0)
   windowStart DateTime
+}
+
+// ── v4.6 — تعدد الفروع ──
+// الفرع وحدة تقارير وربط (مبيعات/موظفون) — المخزون مركزي واحد بقرار v4.6،
+// وتحويل المخزون بين الفروع يُؤجَّل لمسار مستقل (موثق في DEPLOYMENT).
+model Branch {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String?  @unique // رمز داخلي قصير (مثل RUBA-N)
+  phone     String?
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
+  sales Sale[]
+
+  @@index([isActive])
+}
+
+// ── v4.6 — التأمين الطبي ──
+// شركات التأمين/الوكلاء (TPA) التي تتعامل معها الصيدلية
+model InsuranceProvider {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String?  @unique // رمز التعامل (مثل BUPA-SA)
+  phone     String?
+  email     String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  policies PatientInsurancePolicy[]
+  sales    Sale[]
+
+  @@index([isActive])
+}
+
+// بوليصة تأمين لمريض — التغطية بأساس النقطة (bps): 10000 = 100%
+// (نفس معيار النقود الصحيحة: أعداد صحيحة بلا كسور عشرية)
+model PatientInsurancePolicy {
+  id           String            @id @default(cuid())
+  patientId    String
+  patient      Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  providerId   String
+  provider     InsuranceProvider @relation(fields: [providerId], references: [id])
+  policyNumber String
+  holderName   String? // صاحب البوليصة الأساسي (المريض قد يكون مستفيداً من نفس البوليصة)
+  coverageBps  Int               @default(7000) // 70% افتراضياً
+  copayFixed   Int? // مشاركة ثابتة للفاتورة — هللات (تُضاف على المريض قبل نسبة التغطية)
+  expiryDate   DateTime?
+  isActive     Boolean           @default(true)
+  notes        String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  sales Sale[]
+
+  @@unique([providerId, policyNumber])
+  @@index([patientId, isActive])
+  @@index([providerId])
 }

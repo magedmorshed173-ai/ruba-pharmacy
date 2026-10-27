@@ -1,9 +1,10 @@
 import type { NextConfig } from "next";
 
 /**
- * رؤوس الأمان — أحدث المعايير (v3.5):
+ * رؤوس الأمان — أحدث المعايير (v3.5 ثم v4.6):
  *  - HSTS يفرض HTTPS في الإنتاج (أثر لا يذكر محلياً)
- *  - CSP بسياسة مشددة مع استثناء inline المطلوب بنية Next.js (خطة لاحقة: nonce عبر middleware)
+ *  - CSP انتقلت في v4.6 إلى src/middleware.ts بـ nonce لكل طلب +
+ *    'strict-dynamic' — أعلى درجة تشديد عملية مع Next.js (بلا unsafe-inline للسكربتات)
  *  - camera=(self) لأن ماسح الباركود بالكاميرا ميزة معتمدة
  */
 const securityHeaders = [
@@ -17,22 +18,6 @@ const securityHeaders = [
   {
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
-  },
-  {
-    key: "Content-Security-Policy",
-    value: [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
-      "font-src 'self' data:",
-      "connect-src 'self'",
-      "media-src 'self'",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-      "frame-ancestors 'self'",
-    ].join("; "),
   },
 ];
 

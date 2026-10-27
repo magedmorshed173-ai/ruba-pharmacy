@@ -28,6 +28,7 @@ import {
   Legend,
 } from "recharts";
 import { toast } from "sonner";
+import { claimStatusLabel } from "@/lib/insurance"; // v4.6
 import {
   Banknote,
   CalendarDays,
@@ -39,6 +40,8 @@ import {
   Trophy,
   PiggyBank,
   Percent,
+  ShieldCheck,
+  Building2,
 } from "lucide-react";
 
 interface SalesReport {
@@ -84,6 +87,32 @@ interface ProfitReport {
   note?: string | null;
 }
 
+// ── v4.6 — التأمين والفروع ──
+interface ClaimSummaryRow {
+  status: string | null;
+  count: number;
+  insurerHalalas: number;
+  patientHalalas: number;
+  totalHalalas: number;
+}
+interface ClaimRow {
+  id: string;
+  reference: string;
+  saleDate: string;
+  netAmount: number;
+  insurerAmount: number;
+  patientAmount: number;
+  claimStatus: string;
+  patientName?: string | null;
+  insuranceProvider?: { id: string; name: string; code: string | null } | null;
+  insurancePolicy?: { id: string; policyNumber: string; holderName: string | null } | null;
+}
+interface BranchLite {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+
 export function ReportsView({ user }: { user: AuthUser }) {
   const [report, setReport] = useState<SalesReport | null>(null);
   const [restock, setRestock] = useState<RestockRow[] | null>(null);
@@ -91,6 +120,44 @@ export function ReportsView({ user }: { user: AuthUser }) {
   const canSeeProfit = user.role === "admin" || user.role === "pharmacist";
   const [profit, setProfit] = useState<ProfitReport | null>(null);
   const [profitDays, setProfitDays] = useState(30);
+
+  // ── v4.6 — الفروع: فلتر تقرير المبيعات ──
+  const [branches, setBranches] = useState<BranchLite[]>([]);
+  const [branchId, setBranchId] = useState("all");
+  // ── v4.6 — مطالبات التأمين ──
+  const [claims, setClaims] = useState<ClaimRow[] | null>(null);
+  const [claimSummary, setClaimSummary] = useState<ClaimSummaryRow[]>([]);
+  const [claimDays, setClaimDays] = useState(30);
+  const [claimStatus, setClaimStatus] = useState("");
+  const [claimLoading, setClaimLoading] = useState(false);
+
+  const loadSales = useCallback(async (bid: string) => {
+    try {
+      const extra = bid !== "all" ? `&branchId=${encodeURIComponent(bid)}` : "";
+      const r = await api<SalesReport>(`/api/reports/sales?days=14${extra}`);
+      setReport(r);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر جلب التقرير");
+    }
+  }, []);
+
+  const loadClaims = useCallback(async (days: number, status: string) => {
+    setClaimLoading(true);
+    try {
+      const p = new URLSearchParams({ days: String(days) });
+      if (status) p.set("status", status);
+      const r = await api<{ claims: ClaimRow[]; summary: ClaimSummaryRow[] }>(
+        `/api/insurance/claims?${p.toString()}`
+      );
+      setClaims(r.claims);
+      setClaimSummary(r.summary);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر جلب المطالبات");
+      setClaims([]);
+    } finally {
+      setClaimLoading(false);
+    }
+  }, []);
 
   const loadProfit = useCallback(async (days: number) => {
     try {
@@ -102,13 +169,14 @@ export function ReportsView({ user }: { user: AuthUser }) {
   }, []);
 
   useEffect(() => {
-    api<SalesReport>("/api/reports/sales?days=14")
-      .then(setReport)
-      .catch((e) => toast.error(e.message));
+    loadSales("all");
+    api<{ branches: BranchLite[] }>("/api/branches?active=1")
+      .then((r) => setBranches(r.branches ?? []))
+      .catch(() => setBranches([]));
     api<{ rows: RestockRow[] }>("/api/reports/restock")
       .then((r) => setRestock(r.rows))
       .catch(() => setRestock([]));
-  }, []);
+  }, [loadSales]);
 
   async function exportCsv() {
     setExporting(true);
@@ -138,6 +206,16 @@ export function ReportsView({ user }: { user: AuthUser }) {
     }
   }
 
+  async function updateClaim(saleId: string, status: string) {
+    try {
+      await api(`/api/insurance/claims/${saleId}`, { method: "PATCH", json: { status } });
+      toast.success("تم تحديث حالة المطالبة");
+      await loadClaims(claimDays, claimStatus);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر التحديث");
+    }
+  }
+
   if (!report)
     return (
       <div className="space-y-4">
@@ -154,6 +232,7 @@ export function ReportsView({ user }: { user: AuthUser }) {
     <div className="space-y-6">
       <Tabs defaultValue="sales" dir="rtl" onValueChange={(v) => {
         if (v === "profit" && profit === null) loadProfit(profitDays);
+        if (v === "claims" && claims === null) loadClaims(claimDays, claimStatus);
       }}>
         <TabsList className="h-10">
           <TabsTrigger value="sales" className="px-4">
@@ -164,6 +243,11 @@ export function ReportsView({ user }: { user: AuthUser }) {
               <PiggyBank className="size-4" /> الأرباح
             </TabsTrigger>
           )}
+          {canSeeProfit && (
+            <TabsTrigger value="claims" className="px-4">
+              <ShieldCheck className="size-4" /> التأمين
+            </TabsTrigger>
+          )}
           <TabsTrigger value="restock" className="px-4">
             <PackagePlus className="size-4" /> إعادة الطلب الذكية
           </TabsTrigger>
@@ -171,6 +255,28 @@ export function ReportsView({ user }: { user: AuthUser }) {
 
         {/* تبويب المبيعات */}
         <TabsContent value="sales" className="mt-4 space-y-4">
+          {/* v4.6 — فلتر الفرع */}
+          {branches.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Building2 className="size-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">الفرع:</span>
+              <select
+                className="h-9 rounded-md border bg-card px-3 text-sm"
+                value={branchId}
+                onChange={(e) => {
+                  setBranchId(e.target.value);
+                  loadSales(e.target.value);
+                }}
+              >
+                <option value="all">كل الفروع</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
             <StatCard
               title="إيراد اليوم"
@@ -425,6 +531,181 @@ export function ReportsView({ user }: { user: AuthUser }) {
                 </Table>
               </div>
             </>
+          )}
+        </TabsContent>
+
+        {/* تبويب مطالبات التأمين — v4.6 */}
+        <TabsContent value="claims" className="mt-4 space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">الفترة:</span>
+            {[30, 90].map((d) => (
+              <button
+                key={d}
+                onClick={() => {
+                  setClaimDays(d);
+                  loadClaims(d, claimStatus);
+                }}
+                className={`num rounded-lg px-3 py-1.5 text-sm font-bold transition ${
+                  claimDays === d
+                    ? "bg-teal-600 text-white"
+                    : "border bg-card text-muted-foreground hover:bg-accent"
+                }`}
+              >
+                {d} يوم
+              </button>
+            ))}
+            <span className="ms-2 text-sm text-muted-foreground">الحالة:</span>
+            <select
+              className="h-9 rounded-md border bg-card px-3 text-sm"
+              value={claimStatus}
+              onChange={(e) => {
+                setClaimStatus(e.target.value);
+                loadClaims(claimDays, e.target.value);
+              }}
+            >
+              <option value="">الكل</option>
+              <option value="pending">بانتظار المراجعة</option>
+              <option value="approved">معتمدة</option>
+              <option value="rejected">مرفوضة</option>
+              <option value="paid">محصّلة</option>
+            </select>
+          </div>
+
+          {/* ملخص الحالات — قابلية التحصيل */}
+          {claimSummary.length > 0 && (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {claimSummary.map((s) => (
+                <div
+                  key={s.status ?? "x"}
+                  className="rounded-xl border bg-card p-3 shadow-sm"
+                >
+                  <p className="text-xs font-bold text-muted-foreground">
+                    {claimStatusLabel(s.status)}
+                  </p>
+                  <p className="num mt-1 text-lg font-extrabold">
+                    {fmtMoney(s.insurerHalalas)} ر.س
+                  </p>
+                  <p className="num text-[11px] text-muted-foreground">
+                    {fmtNum(s.count)} مطالبة · مطلوب المرضى {fmtMoney(s.patientHalalas)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+            {claimLoading || claims === null ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="size-6 animate-spin text-teal-600" />
+              </div>
+            ) : claims.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                لا مطالبات تأمين في هذه الفترة والفلترة
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>التاريخ</TableHead>
+                    <TableHead className="hidden md:table-cell">المرجع</TableHead>
+                    <TableHead>الشركة / البوليصة</TableHead>
+                    <TableHead className="text-center">الإجمالي</TableHead>
+                    <TableHead className="text-center">المؤمن</TableHead>
+                    <TableHead className="text-center">المريض</TableHead>
+                    <TableHead>الحالة</TableHead>
+                    {user.role === "admin" && <TableHead>قرار</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {claims.map((c) => (
+                    <TableRow key={c.id}>
+                      <TableCell className="text-xs">{fmtDate(c.saleDate)}</TableCell>
+                      <TableCell className="num hidden text-xs text-muted-foreground md:table-cell" dir="ltr">
+                        {c.reference}
+                      </TableCell>
+                      <TableCell>
+                        <p className="text-sm font-bold">{c.insuranceProvider?.name ?? "—"}</p>
+                        <p className="num text-[11px] text-muted-foreground" dir="ltr">
+                          {c.insurancePolicy?.policyNumber ?? ""}
+                        </p>
+                      </TableCell>
+                      <TableCell className="num text-center text-sm">{fmtMoney(c.netAmount)}</TableCell>
+                      <TableCell className="num text-center text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                        {fmtMoney(c.insurerAmount)}
+                      </TableCell>
+                      <TableCell className="num text-center text-sm text-amber-600 dark:text-amber-400">
+                        {fmtMoney(c.patientAmount)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={
+                            c.claimStatus === "paid"
+                              ? "border-emerald-300 text-emerald-700"
+                              : c.claimStatus === "approved"
+                                ? "border-teal-300 text-teal-700"
+                                : c.claimStatus === "rejected"
+                                  ? "border-rose-300 text-rose-700"
+                                  : "border-amber-300 text-amber-700"
+                          }
+                        >
+                          {claimStatusLabel(c.claimStatus)}
+                        </Badge>
+                      </TableCell>
+                      {user.role === "admin" && (
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {c.claimStatus === "pending" && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  className="h-7 bg-emerald-600 px-2 text-xs hover:bg-emerald-700"
+                                  onClick={() => updateClaim(c.id, "approved")}
+                                >
+                                  اعتماد
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs text-rose-600"
+                                  onClick={() => updateClaim(c.id, "rejected")}
+                                >
+                                  رفض
+                                </Button>
+                              </>
+                            )}
+                            {c.claimStatus === "approved" && (
+                              <Button
+                                size="sm"
+                                className="h-7 bg-teal-600 px-2 text-xs hover:bg-teal-700"
+                                onClick={() => updateClaim(c.id, "paid")}
+                              >
+                                تحصيل
+                              </Button>
+                            )}
+                            {c.claimStatus === "rejected" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => updateClaim(c.id, "pending")}
+                              >
+                                إعادة فتح
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+          {user.role !== "admin" && claims && claims.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              قرارات الاعتماد والرفض والتحصيل للمدير فقط — تظهر الأزرار لحساب المدير.
+            </p>
           )}
         </TabsContent>
 

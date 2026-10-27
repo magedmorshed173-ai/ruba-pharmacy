@@ -42,3 +42,70 @@ jobs:
 
       - name: بناء الإنتاج (بفحص أنواع مفعل)
         run: bun run build
+
+  # v4.6 (P2) — اختبارات Playwright على Postgres خدمي حقيقي:
+  # ترحيلات → بذر مدير → بناء إنتاج → تشغيل الخادم → specs
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ruba
+          POSTGRES_PASSWORD: ruba
+          POSTGRES_DB: ruba_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "postgresql://ruba:ruba@localhost:5432/ruba_e2e?sslmode=disable"
+      DIRECT_URL: "postgresql://ruba:ruba@localhost:5432/ruba_e2e?sslmode=disable"
+      AUTH_SECRET: "ci-e2e-secret-not-used-in-prod-0123456789abcdef"
+      E2E_BASE_URL: "http://127.0.0.1:3000"
+      E2E_ADMIN_USER: "admin"
+      E2E_ADMIN_PASSWORD: "ruba-e2e-password-2026"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: تثبيت الاعتماديات
+        run: bun install --frozen-lockfile
+
+      - name: الترحيلات على Postgres الخدمي
+        run: bunx prisma migrate deploy
+
+      - name: بذر مدير E2E
+        run: bun scripts/seed-e2e.ts
+
+      - name: بناء الإنتاج
+        run: bun run build
+
+      - name: تثبيت متصفح Playwright
+        run: bunx playwright install --with-deps chromium
+
+      - name: تشغيل الخادم
+        run: |
+          bun .next/standalone/server.js &
+          for i in $(seq 1 45); do
+            curl -sf http://127.0.0.1:3000/ >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+      - name: اختبارات E2E
+        run: bunx playwright test
+
+      - name: رفع تقرير الفشل
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

@@ -14,6 +14,9 @@ const PUBLIC_FIELDS = {
   phone: true,
   isActive: true,
   createdAt: true,
+  // v4.6 — فرع العمل
+  branchId: true,
+  branch: { select: { id: true, name: true } },
 };
 
 // PUT /api/users/:id — تعديل مستخدم (مدير فقط)
@@ -37,6 +40,18 @@ export async function PUT(
     if (body.role !== undefined && ["admin", "pharmacist", "technician"].includes(body.role))
       data.role = body.role;
     if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
+    if (body.branchId !== undefined) {
+      // v4.6 — تعيين فرع العمل (null = بلا فرع / يشاهد الكل في التقارير)
+      const bid = String(body.branchId ?? "").trim() || null;
+      if (bid) {
+        const branch = await db.branch.findUnique({
+          where: { id: bid },
+          select: { isActive: true },
+        });
+        if (!branch) return fail("الفرع غير موجود", 404);
+      }
+      data.branchId = bid;
+    }
     if (body.password) {
       const pw = String(body.password);
       if (pw.length < 8) return fail("كلمة المرور يجب أن تكون 8 أحرف على الأقل");

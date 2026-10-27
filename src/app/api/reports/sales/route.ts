@@ -9,6 +9,9 @@ export async function GET(request: NextRequest) {
 
   const sp = request.nextUrl.searchParams;
   const days = Math.min(365, Math.max(7, Number(sp.get("days") ?? 30)));
+  // v4.6 — فلتر الفرع (اختياري): تقرير مخصص لفرع واحد
+  const branchId = sp.get("branchId")?.trim() || "";
+  const branchCond = branchId ? { branchId } : {};
 
   try {
     const now = new Date();
@@ -21,7 +24,7 @@ export async function GET(request: NextRequest) {
       const agg = await db.sale.aggregate({
         _count: { id: true },
         _sum: { netAmount: true, discount: true },
-        where: { saleDate: { gte: from }, status: "completed" },
+        where: { saleDate: { gte: from }, status: "completed", ...branchCond },
       });
       return {
         count: agg._count.id,
@@ -41,14 +44,14 @@ export async function GET(request: NextRequest) {
     const topItems = await db.saleItem.groupBy({
       by: ["medicineName"],
       _sum: { quantity: true, subtotal: true },
-      where: { sale: { saleDate: { gte: sincePeriod }, status: "completed" } },
+      where: { sale: { saleDate: { gte: sincePeriod }, status: "completed", ...branchCond } },
       orderBy: { _sum: { quantity: "desc" } },
       take: 10,
     });
 
     // سلسلة المبيعات اليومية للمدة
     const sales = await db.sale.findMany({
-      where: { saleDate: { gte: sincePeriod }, status: "completed" },
+      where: { saleDate: { gte: sincePeriod }, status: "completed", ...branchCond },
       select: { saleDate: true, netAmount: true },
     });
     const dayMap = new Map<string, number>();
@@ -70,7 +73,7 @@ export async function GET(request: NextRequest) {
       by: ["paymentMethod"],
       _count: { id: true },
       _sum: { netAmount: true },
-      where: { saleDate: { gte: sincePeriod }, status: "completed" },
+      where: { saleDate: { gte: sincePeriod }, status: "completed", ...branchCond },
     });
 
     return ok({

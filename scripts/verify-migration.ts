@@ -64,6 +64,8 @@ try {
     "LoginAudit", "Prescription", "PrescriptionItem", "Patient",
     "Notification", "Session", "Drug", "NationalDrug",
     "InvoiceCounter", "RateLimit",
+    // v4.6 (P2) — التأمين المالي + تعدد الفروع
+    "Branch", "InsuranceProvider", "PatientInsurancePolicy",
   ];
   const res = await db.query<{ tablename: string }>(
     "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
@@ -81,7 +83,9 @@ try {
     "SELECT column_name FROM information_schema.columns WHERE table_name = 'Sale'"
   );
   const saleCols = new Set(cols.rows.map((r) => r.column_name));
-  const missingCols = ["vatRate", "vatTotal", "netOfVat", "invoiceNumber", "zatcaQr"]
+  const missingCols = ["vatRate", "vatTotal", "netOfVat", "invoiceNumber", "zatcaQr",
+    // v4.6 (P2) — أعمدة التأمين والفرع
+    "branchId", "insuranceProviderId", "insurancePolicyId", "insurerAmount", "patientAmount", "claimStatus"]
     .filter((c) => !saleCols.has(c));
   if (missingCols.length > 0) {
     console.error("✗ أعمدة ZATCA مفقودة على Sale:", missingCols.join(", "));
