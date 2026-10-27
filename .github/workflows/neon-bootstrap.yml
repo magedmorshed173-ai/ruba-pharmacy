@@ -86,3 +86,24 @@ jobs:
 
       - name: تحقق حي — عدّ الجداول والعدّادات
         run: bun scripts/db-verify-live.ts
+
+      # ── v4.6.4 — إغلاق الحلقة: رفع متغيرات Vercel الثلاثة وإطلاق نشر الإنتاج ──
+      # وضع catalog حصراً (إنتاج نظيف). المتغيرات تُرفع مشفّرة على
+      # production+preview+development، وAUTH_SECRET يولَّد هنا ولا يُطبع،
+      # ثم يُطلق نشر من main عبر API — كل ذلك بلا أي قيمة في السجلات.
+      - name: ربط Vercel — المتغيرات الثلاثة ثم إطلاق نشر الإنتاج (وضع catalog)
+        if: ${{ inputs.mode == 'catalog' }}
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          DIRECT_URL: ${{ env.DIRECT_URL }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::سر VERCEL_TOKEN غير مضبوط — Vercel → Account Settings → Tokens ثم: Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          echo "::add-mask::$VERCEL_TOKEN"
+          AUTH_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$AUTH_SECRET"
+          export AUTH_SECRET
+          python3 scripts/vercel_wire.py
