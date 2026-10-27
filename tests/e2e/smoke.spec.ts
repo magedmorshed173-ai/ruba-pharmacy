@@ -1,15 +1,20 @@
 import { expect, test } from "@playwright/test";
+import { tryUnlockSystem } from "./helpers";
 
 /**
  * اختبارات السطح العام — بلا قاعدة بيانات:
  * الصفحة تصير حتى بلا قاعدة (تستهلك الـ API من المتصفح) —
  * نتحقق هنا من: الترسيّر، RTL، رؤوس الأمان (CSP بـ nonce)، منع الأطر.
+ * v4.7 — القفل: نحاول فتحه صامتةً إن توفرت بيانات المدير (في CI دائماً)؛
+ * بلا قاعدة تبقى الشاشة المقفلة وهي نفسها عربية RTL — التأكيدات تمر.
  */
 
 test.describe("السطح العام", () => {
   test("الصفحة الرئيسية ترتجل للدخول وترتسم RTL", async ({ page }) => {
+    await tryUnlockSystem(page);
     await page.goto("/");
     // التطبيق عميل كامل: يظهر شاشة الدخول عند عدم وجود جلسة
+    // (بلا قاعدة/بيانات مدير تظهر شاشة القفل — وهي عربية RTL أيضاً)
     await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
     await expect(page.locator("html")).toHaveAttribute("lang", /ar/);
     // عنصر جذري مرتسم فعلاً (لا شاشة بيضاء ولا حدود خطأ)

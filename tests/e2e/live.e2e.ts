@@ -22,6 +22,10 @@ process.env.AUTH_SECRET = "e2e-live-secret-not-for-production";
 // v4.3 — حارس عزل: يعطّل dotenv override داخل السكربتات والخادم المُشغّل
 // من الحاضنة، فلا يتسرب الاتصال إلى قاعدة Neon الحقيقية من ملف .env
 process.env.DOTENV_KEEP_ENV = "1";
+// v4.7 — قفل النظام يُعطل في هذا الجناح: هو يختبر طبقة الدخول والتشغيل
+// (2000+ تأكيد مبني على وصول حر للصفحات) — القفل نفسه له جناح مستقل
+// system-lock.spec.ts في اختبارات Playwright.
+process.env.SYSTEM_LOCK = "off";
 
 // v4.3 — منذ ترحيل v4.2 أصبح المخطط postgresql، لذا يعمل الجناح على فرع Neon
 // مؤقت (نسخة كوبية معزولة تُنشأ قبل التشغيل وتُحذف بعده) — بدل SQLite الموقوف.
