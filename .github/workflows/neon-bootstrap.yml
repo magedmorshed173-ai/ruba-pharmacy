@@ -1,0 +1,82 @@
+name: Neon Bootstrap
+# v4.6.3 — تهيئة Neon ذاتية الكفاية من مفتاح API وحده (بلا سلاسل اتصال جاهزة):
+# يجد المشروع أو ينشئه، ينتظر جاهزية نقطة النهاية، يستخرج السلسلتين ويخفيهما
+# (::add-mask:: — السجل عمومي)، يطبق الترحيلات، يبذر حسب الوضع، ثم يضمن
+# حساب مدير من سر RUBA_ADMIN_PASSWORD — إغلاق فجوة «قاعدة بلا حساب دخول».
+# الاستخدام: Actions ← Neon Bootstrap ← Run workflow:
+#   catalog — إنتاج نظيف: ترحيلات + كتالوج + سجل وطني + حساب مدير
+#   full    — تجريبي كامل: مستخدمون/مخزون/مبيعات 30 يوماً + الكتالوج + المدير
+# الفرق عن «Neon DB Setup»: هذا يعمل بسر NEON_API_KEY فقط ولا يحتاج إدخال
+# سلاسل الاتصال يدوياً — يشتقها من مفتاح الإدارة داخل العدّاء.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "وضع التهيئة"
+        required: true
+        default: "catalog"
+        type: choice
+        options: [catalog, full]
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: حارس المفتاح
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+        run: |
+          if [ -z "$NEON_API_KEY" ]; then
+            echo "::error::سر NEON_API_KEY غير مضبوط — خذه من console.neon.tech → Account → API Keys ثم: Settings → Secrets and variables → Actions → New repository secret"
+            exit 1
+          fi
+          echo "::add-mask::$NEON_API_KEY"
+
+      - name: حلّ المشروع وسلسلتي الاتصال (مخفيتين)
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_NAME: ruba-pharmacy
+        run: bun scripts/neon-resolve.ts
+
+      - name: تثبيت الاعتماديات
+        run: bun install --frozen-lockfile
+
+      - name: توليد عميل Prisma
+        run: bunx prisma generate
+
+      - name: تنفيذ الترحيلات
+        run: bunx prisma migrate deploy
+
+      - name: بذر كامل تجريبي (وضع full)
+        if: ${{ inputs.mode == 'full' }}
+        run: |
+          bun scripts/seed.ts
+          bun scripts/seed-drugs.ts
+          bun scripts/seed-national.ts
+
+      - name: بذر الكتالوج والسجل الوطني (وضع catalog)
+        if: ${{ inputs.mode == 'catalog' }}
+        run: |
+          bun scripts/seed-drugs.ts
+          bun scripts/seed-national.ts
+
+      - name: ضمان حساب المدير (كلمة مرور السر — لا تُطبع)
+        env:
+          RUBA_ADMIN_PASSWORD: ${{ secrets.RUBA_ADMIN_PASSWORD }}
+        run: |
+          [ -n "$RUBA_ADMIN_PASSWORD" ] && echo "::add-mask::$RUBA_ADMIN_PASSWORD"
+          bun scripts/seed-admin.ts
+
+      - name: حالة الترحيلات النهائية
+        run: bunx prisma migrate status
+
+      - name: تحقق حي — عدّ الجداول والعدّادات
+        run: bun scripts/db-verify-live.ts
