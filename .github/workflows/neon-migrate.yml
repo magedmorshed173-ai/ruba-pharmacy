@@ -73,6 +73,14 @@ jobs:
           bun scripts/seed-drugs.ts
           bun scripts/seed-national.ts
 
+      # ── ضمان حساب المدير (كلا الوضعين) — إغلاق فجوة «قاعدة بلا حساب دخول» ──
+      - name: ضمان حساب المدير (كلمة مرور السر — لا تُطبع)
+        env:
+          RUBA_ADMIN_PASSWORD: ${{ secrets.RUBA_ADMIN_PASSWORD }}
+        run: |
+          [ -n "$RUBA_ADMIN_PASSWORD" ] && echo "::add-mask::$RUBA_ADMIN_PASSWORD"
+          bun scripts/seed-admin.ts
+
       - name: حالة الترحيلات النهائية
         run: bunx prisma migrate status
 
