@@ -46,11 +46,20 @@ jobs:
           echo "curl:     $(curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://api.neon.tech/v2 || echo FAIL)"
           echo "node:     $(node -e "fetch('https://api.neon.tech/v2').then(r=>console.log(r.status)).catch(e=>{console.error(e.cause?.code||e.message);process.exit(1)})" || echo FAIL)"
 
+      - name: إصلاح DNS للـ API عبر DoH عند فشل المحلّل النظامي (v4.6.4)
+        run: python3 scripts/doh_fix_hosts.py api.neon.tech
+
       - name: حلّ المشروع وسلسلتي الاتصال (مخفيتين — curl/python متجنباً DNS الخاص بـ bun)
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_NAME: ruba-pharmacy
         run: python3 scripts/neon_resolve.py
+
+      - name: إصلاح DNS لنقطة نهاية SQL عبر DoH عند فشل المحلّل النظامي (v4.6.4)
+        run: |
+          H1=$(python3 -c "import os,urllib.parse; print(urllib.parse.urlparse(os.environ['DATABASE_URL']).hostname or '')")
+          H2=$(python3 -c "import os,urllib.parse; print(urllib.parse.urlparse(os.environ['DIRECT_URL']).hostname or '')")
+          python3 scripts/doh_fix_hosts.py "$H1" "$H2"
 
       - name: تثبيت الاعتماديات
         run: bun install --frozen-lockfile
@@ -60,6 +69,8 @@ jobs:
 
       - name: تنفيذ الترحيلات
         run: bunx prisma migrate deploy
+      # ملاحظة: الاتصال بـ postgres عبر bun/pg يستخدم مكدس node-dns — قد يلزم
+      # إدراج المضيف في /etc/hosts وقد تم أعلاه، وgetaddrinfo النظامي يقرأه.
 
       - name: بذر كامل تجريبي (وضع full)
         if: ${{ inputs.mode == 'full' }}

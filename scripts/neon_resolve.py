@@ -45,17 +45,29 @@ def api(path: str, data: dict | None = None, method: str | None = None) -> dict:
             "Content-Type": "application/json",
         },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as res:
-            raw = res.read()
-            return json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as e:
-        print(f"::error::فشل نداء Neon API {method or 'GET'} {path} — الحالة {e.code}")
-        print(e.read().decode()[:400])
-        sys.exit(1)
-    except urllib.error.URLError as e:
-        print(f"::error::تعذر الوصول إلى Neon API: {e.reason}")
-        sys.exit(1)
+    # إعادة محاولة للأخطاء العابرة (DNS متذبذب عند العدّاءين، 5xx، 429)
+    last: Exception | None = None
+    for _ in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                raw = res.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            if e.code < 500 and e.code != 429:
+                print(
+                    f"::error::فشل نداء Neon API {method or 'GET'} {path} — الحالة {e.code}"
+                )
+                print(e.read().decode()[:400])
+                sys.exit(1)
+            last = e
+        except urllib.error.URLError as e:
+            last = e
+        time.sleep(4)
+    if isinstance(last, urllib.error.HTTPError):
+        print(f"::error::فشل نداء Neon API {method or 'GET'} {path} — الحالة {last.code} بعد 3 محاولات")
+    else:
+        print(f"::error::تعذر الوصول إلى Neon API: {getattr(last, 'reason', last)}")
+    sys.exit(1)
 
 
 def wait_ready(project_id: str, branch_id: str) -> None:
