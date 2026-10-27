@@ -21,6 +21,15 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#FFFFFF",
     theme_color: "#0D9488",
     categories: ["medical", "business", "productivity"],
+    shortcuts: [
+      {
+        name: "تحميل على أجهزة أخرى",
+        short_name: "تحميل",
+        description: "تثبيت التطبيق على أندرويد/آيفون/ويندوز/ماك/لينكس/Termux",
+        url: "/download",
+        icons: [{ src: "/pwa-192.png", sizes: "192x192", type: "image/png" }],
+      },
+    ],
     icons: [
       { src: "/pwa-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
       { src: "/pwa-512.png", sizes: "512x512", type: "image/png", purpose: "any" },

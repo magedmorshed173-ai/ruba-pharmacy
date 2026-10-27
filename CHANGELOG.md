@@ -4,6 +4,25 @@
 الصيغة مبنية على [Keep a Changelog](https://keepachangelog.com/ar/1.1.0/)
 والإصدارات تتبع [SemVer](https://semver.org/lang/ar/).
 
+## [4.6.6] — 2026-10-28 — «التطبيق على كل المنصات: توزيع شامل وتثبيت بأمر واحد»
+
+### مضاف
+- **صفحة `/download` داخل التطبيق**: بطاقات تفاعلية لكل منصة (أندرويد/آيفون/ويندوز/ماك/لينكس/Termux) مع زر تثبيت PWA حي عبر `beforeinstallprompt`، وتمييز جهاز المستخدم تلقائياً، وأوامر تثبيت قابلة للنسخ، وكشف وضع standalone.
+- **`scripts/install.sh` — المثبّت الشامل**: Linux (كل التوزيعات) · macOS · WSL · Termux — يكتشف البيئة، يثبّت Bun أو Node 22 محلياً بلا جذر، ينسخ المشروع، يضبط `.env` بقراءة مخفية (بلا طباعة أي قيمة)، يشتق `DIRECT_URL` من المجمّعة، يطبّق الترحيلات، يبني ويشغّل، وخيارات `--docker` / `--seed` / `--service` (systemd) / `--port` / `--no-run`. **Termux**: يجهّز Debian داخل proot-distro تلقائياً (glibc كاملة بلا root) ثم يعيد تشغيل نفسه داخله.
+- **`scripts/install.ps1` — مثبّت ويندوز الأصلي**: winget للتثبيتات، مسار Docker أو Bun أو Node، إدخال مخفي بـ SecureString، ترحيلات + بناء + تشغيل وفتح المتصفح.
+- **`docs/PLATFORMS.md`** — دليل التوزيع الكامل لكل منصة مع جدول طرق، متطلبات النظام، وروابط رسمية.
+- **اختصار PWA «تحميل على أجهزة أخرى»** في manifest (الضغط المطوّل على أيقونة التطبيق).
+- **إصدار GitHub v4.6.6** بأصول تحميل: `install.sh` / `install.ps1` / `docker-compose.yml`.
+
+### مُعدَّل — بناء عابر للمنصات فعلياً
+- **`build`**: `cp -r` (يفشل على cmd.exe/PowerShell) استُبدل بـ **`scripts/copy-standalone.mjs`** (Node `fs.cpSync`) — نفس النتيجة على Linux/Termux/macOS/Windows.
+- **`start`**: `node .next/standalone/server.js` مباشرة (كان يتطلب `NODE_ENV=… bun … | tee` — يونكسي بحت)؛ سكربت bun انتقل إلى **`start:bun`**.
+- ملاحظة: Dockerfile غير متأثر (يستخدم `bunx next build` و`CMD node server.js` مباشرة).
+
+### القرار
+- مسار Termux الرسمي = proot-distro Debian (بيئة glibc موثوقة تشغّل Bun وTurbopack بلا الاستثناءات المعروفة لبيئة bionic) — بدل مسارات node/npm الهشة على Termux الخام.
+- «التطبيق» على كل المنصات = PWA موحّدة (تحديث تلقائي بلا متاجر) + TWA اختياري لمتجر Play + مثبّتات ذاتية الاستضافة لمن يريد بياناته محلياً.
+
 ## [4.6.5] — 2026-10-28 — «الإطلاق الحي: قاعدة Neon مُدارة من Vercel + نشر الإنتاج الناجح»
 
 ### مضاف

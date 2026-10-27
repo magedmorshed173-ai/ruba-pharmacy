@@ -32,6 +32,28 @@
 |:---:|:---:|
 | ![تسجيل الدخول](docs/screenshots/login.png) | تحذير فوري عند الجمع بين **وارفارين + أسبرين** (خطر نزف) مباشرة في سلة البيع |
 
+## 📥 التحميل على كل المنصات (v4.6.6)
+
+| المنصة | الطريقة |
+|---|---|
+| 📱 أندرويد / آيفون | **تثبيت كتطبيق (PWA)** بضغطة من [التطبيق الحي](https://ruba-pharmacy.vercel.app/download) — أو حزمة TWA لـ Google Play (`docs/ANDROID.md`) |
+| 💻 ويندوز / ماك / لينكس | تثبيت PWA من Edge/Chrome — أو استضافة ذاتية بأمر واحد |
+| 📟 Termux (أندرويد) | خادم كامل داخل الهاتف: يجهّز Debian داخل proot تلقائياً |
+| 🐳 خوادم VPS/NAS | Docker Compose (قاعدة + ترحيلات + منصة بأمر واحد) |
+
+```bash
+# Linux · macOS · WSL · Termux — مثبّت شامل بأمر واحد:
+curl -fsSL https://raw.githubusercontent.com/magedmorshed173-ai/ruba-pharmacy/main/scripts/install.sh | bash
+```
+
+```powershell
+# Windows PowerShell:
+irm https://raw.githubusercontent.com/magedmorshed173-ai/ruba-pharmacy/main/scripts/install.ps1 | iex
+```
+
+التفصيل الكامل لكل منصة في **[docs/PLATFORMS.md](docs/PLATFORMS.md)**، وصفحة
+التحميل التفاعلية داخل التطبيق: **`/download`**.
+
 ## ✨ المزايا
 
 ### 🛒 نقطة البيع (POS)
