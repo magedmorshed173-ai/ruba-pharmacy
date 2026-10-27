@@ -18,7 +18,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-API = "https://api.neon.tech/v2"
+API = os.environ.get("NEON_API_BASE", "https://console.neon.tech/api/v2")
+# v4.6.4 — نطاق api.neon.tech تقاعد عالمياً (NXDOMAIN من DoH متعددة)؛
+# العنوان الرسمي للـ API هو console.neon.tech/api/v2
 PROJECT_NAME = os.environ.get("NEON_PROJECT_NAME", "ruba-pharmacy")
 
 
@@ -26,7 +28,7 @@ def mask(value: str) -> None:
     print(f"::add-mask::{value}")
 
 
-def api(path: str, data: dict | None = None, method: str | None = None) -> dict:
+def api(path: str, data: dict | None = None, method: str | None = None, soft: bool = False) -> dict:
     key = os.environ.get("NEON_API_KEY", "")
     if not key:
         print(
@@ -54,10 +56,13 @@ def api(path: str, data: dict | None = None, method: str | None = None) -> dict:
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as e:
             if e.code < 500 and e.code != 429:
+                snippet = e.read().decode()[:400]
+                if soft:
+                    raise ValueError(f"HTTP {e.code}: {snippet}")
                 print(
                     f"::error::فشل نداء Neon API {method or 'GET'} {path} — الحالة {e.code}"
                 )
-                print(e.read().decode()[:400])
+                print(snippet)
                 sys.exit(1)
             last = e
         except urllib.error.URLError as e:
@@ -84,8 +89,20 @@ def wait_ready(project_id: str, branch_id: str) -> None:
 
 
 def main() -> None:
-    # 1) المشروع: موجود أو جديد
-    projects = api("/projects").get("projects", [])
+    # 1) الحساب والمنظمات — الحسابات المنظمة تتطلب org_id
+    me = api("/users/me")
+    print(f"المفتاح صالح — الحساب: {me.get('login') or me.get('email') or me.get('id')}")
+    org_id = ""
+    try:
+        orgs = api("/users/me/organizations", soft=True).get("organizations", [])
+        if orgs:
+            org_id = orgs[0]["id"]
+            print(f"المنظمة: {orgs[0].get('name')} ({org_id})")
+    except ValueError:
+        print("لا منظمات — حساب شخصي")
+
+    # 2) المشروع: موجود أو جديد
+    projects = api("/projects" + (f"?org_id={org_id}" if org_id else "")).get("projects", [])
     project = next((p for p in projects if p.get("name") == PROJECT_NAME), None)
     if project:
         print(
@@ -97,17 +114,25 @@ def main() -> None:
             f"::notice::لا مشروع باسم {PROJECT_NAME} — إنشاء جديد على "
             "aws-us-east-2 (الأقرب لـ Vercel iad1)"
         )
-        project = api(
-            "/projects",
-            {
-                "project": {
-                    "name": PROJECT_NAME,
-                    "pg_version": 16,
-                    "region_id": "aws-us-east-2",
-                }
-            },
-            method="POST",
-        )["project"]
+        base = {"name": PROJECT_NAME, "pg_version": 16, "region_id": "aws-us-east-2"}
+        if org_id:
+            try:
+                # المحاولة 1: org_id كمعامل استعلام (نفس نمط GET)
+                project = api(f"/projects?org_id={org_id}", {"project": base}, method="POST", soft=True)["project"]
+            except ValueError as e:
+                if "managed by Vercel" in str(e):
+                    print(
+                        "::error::المنظمة مُدارة من Vercel — لا يمكن إنشاء المشروع من Neon API. "
+                        "أنشئ القاعدة من Vercel: Dashboard → التيم → Storage → Create Database → Neon Postgres، "
+                        "ثم اربطها بمشروع ruba-pharmacy (سيضيف Vercel متغيرات الاتصال تلقائياً)، "
+                        "أو مرّر NEON_DATABASE_URL وNEON_DIRECT_URL كأسرار واستخدم workflow «Neon DB Setup»."
+                    )
+                    sys.exit(1)
+                print(f"محاولة query param فشلت — {e} — تجربة org_id داخل كائن المشروع")
+                # المحاولة 2: org_id داخل كائن المشروع
+                project = api("/projects", {"project": {**base, "org_id": org_id}}, method="POST")["project"]
+        else:
+            project = api("/projects", {"project": base}, method="POST")["project"]
         print(f"أُنشئ المشروع: {project['name']} ({project['id']})")
 
     # 2) الفرع الافتراضي + جاهزية النهاية

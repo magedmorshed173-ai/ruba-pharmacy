@@ -42,12 +42,12 @@ jobs:
 
       - name: تشخيص شبكة — أي مكدس DNS يصل إلى Neon؟
         run: |
-          echo "getent:   $(getent hosts api.neon.tech | head -1 || echo FAIL)"
-          echo "curl:     $(curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://api.neon.tech/v2 || echo FAIL)"
-          echo "node:     $(node -e "fetch('https://api.neon.tech/v2').then(r=>console.log(r.status)).catch(e=>{console.error(e.cause?.code||e.message);process.exit(1)})" || echo FAIL)"
+          echo "getent:   $(getent hosts console.neon.tech | head -1 || echo FAIL)"
+          echo "curl:     $(curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://console.neon.tech/api/v2/projects || echo FAIL)"
+          echo "node:     $(node -e "fetch('https://console.neon.tech/api/v2/projects').then(r=>console.log(r.status)).catch(e=>{console.error(e.cause?.code||e.message);process.exit(1)})" || echo FAIL)"
 
       - name: إصلاح DNS للـ API عبر DoH عند فشل المحلّل النظامي (v4.6.4)
-        run: python3 scripts/doh_fix_hosts.py api.neon.tech
+        run: python3 scripts/doh_fix_hosts.py console.neon.tech
 
       - name: حلّ المشروع وسلسلتي الاتصال (مخفيتين — curl/python متجنباً DNS الخاص بـ bun)
         env:
