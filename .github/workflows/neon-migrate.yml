@@ -1,0 +1,80 @@
+name: Neon DB Setup
+# v4.6.1 — تهيئة قاعدة Neon بنقرة زر (بدون أي طرف ثالث):
+# بيئة التطوير المحلية لا تصل إلى نطاقات *.aws.neon.tech (DNS مقيد) —
+# لكن عدّاء GitHub Actions متصل بالإنترنت بالكامل، لذا تُنفَّذ الترحيلات
+# والبذر من هنا بأمان: الأسرار في Repository Secrets ولا شيء في الكود.
+#
+# الاستخدام: تبويب Actions ← «Neon DB Setup» ← Run workflow ← اختر الوضع:
+#   full          — قاعدة جديدة كاملة: ترحيلات + بذر تجريبي (مستخدمون/كتالوج/73 فاتورة 30 يوماً)
+#   catalog       — قاعدة إنتاج نظيفة: ترحيلات + كتالوج الدواء والسجل الوطني فقط (بلا مبيعات وهمية)
+#   baseline      — قاعدة قائمة كانت تعمل بنمط db push: تسجيل 0_init ثم تطبيق الترحيلات الأحدث
+#   migrate-only  — تطبيق الترحيلات المعلقة فقط (الترقيات الروتينية)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "وضع التهيئة"
+        required: true
+        default: "catalog"
+        type: choice
+        options: [full, catalog, baseline, migrate-only]
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.NEON_DIRECT_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: حارس الأسرار
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$DIRECT_URL" ]; then
+            echo "::error::أسرار الريبو غير مضبوطة — أضف NEON_DATABASE_URL (سلسلة الاتصال المجمّعة -pooler) وNEON_DIRECT_URL (المباشرة) من: Settings → Secrets and variables → Actions → New repository secret. انسخهما من لوحة Neon (Dashboard → Connection Details)."
+            exit 1
+          fi
+          case "$DIRECT_URL" in
+            *-pooler*) echo "::warning::DIRECT_URL يبدو مجمّعاً (يحتوي -pooler) — الترحيلات تفضّل السلسلة المباشرة بلا -pooler." ;;
+          esac
+
+      - name: تثبيت الاعتماديات
+        run: bun install --frozen-lockfile
+
+      - name: توليد عميل Prisma
+        run: bunx prisma generate
+
+      # ── baseline: قاعدة قائمة بلا جدول ترحيلات (كانت db push) ──
+      - name: تسجيل خط الأساس 0_init (وضع baseline)
+        if: ${{ inputs.mode == 'baseline' }}
+        run: bun run db:migrate:baseline
+
+      # ── تطبيق الترحيلات (كل الأوضاع) ──
+      - name: تنفيذ الترحيلات
+        run: bunx prisma migrate deploy
+
+      # ── البذر ──
+      - name: بذر كامل تجريبي (وضع full)
+        if: ${{ inputs.mode == 'full' }}
+        run: |
+          bun scripts/seed.ts
+          bun scripts/seed-drugs.ts
+          bun scripts/seed-national.ts
+
+      - name: بذر الكتالوج فقط (وضع catalog)
+        if: ${{ inputs.mode == 'catalog' }}
+        run: |
+          bun scripts/seed-drugs.ts
+          bun scripts/seed-national.ts
+
+      - name: حالة الترحيلات النهائية
+        run: bunx prisma migrate status
+
+      - name: تحقق حي — عدّ الجداول والعدّادات
+        run: bun scripts/db-verify-live.ts

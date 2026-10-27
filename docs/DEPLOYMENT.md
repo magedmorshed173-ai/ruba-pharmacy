@@ -4,15 +4,26 @@
 
 ثلاثة مسارات مدعومة رسمياً، من الأسهل للأقوى. افترض أن لديك نسخة من المستودع و Bun مثبتاً للتطوير.
 
-## المسار 1 — Vercel (الأسرع لبدء التشغيل)
+## المسار 1 — Vercel + Neon (الأسرع لبدء التشغيل)
 
-1. اربط المستودع بـ [vercel.com](https://vercel.com) (New Project ← Import).
-2. أضف متغير البيئة:
+المخطط منذ v4.2 على PostgreSQL حصرياً — على Vercel اربطه بقاعدة Neon (المسار 3 للتهيئة):
+
+1. هيّئ قاعدة Neon أولاً (ترحيلات + بذر) — أسهل طريق «زر من Actions» أدناه في قسم المسار 3.
+2. اربط المستودع بـ [vercel.com](https://vercel.com) (New Project ← Import) — يُكتشف تلقائياً بلا vercel.json (Framework Preset: Next.js؛ لا تحذف `output: standalone` فالمنصة تتجاهله بأمان).
+3. أضف متغيرات البيئة (Settings → Environment Variables — كلها للبيئات الثلاث Production/Preview/Development):
    ```
-   DATABASE_URL=file:/tmp/custom.db
+   DATABASE_URL="postgresql://…@ep-XXXX-pooler.REGION.aws.neon.tech/neondb?sslmode=require"   # المجمّعة
+   DIRECT_URL="postgresql://…@ep-XXXX.REGION.aws.neon.tech/neondb?sslmode=require"           # المباشرة — للترحيلات
+   AUTH_SECRET="<سلسلة عشوائية ≥32 حرفاً — openssl rand -hex 32>"                          # إلزامي: بلاه يرفض الإنتاج التشغيل (fail-closed)
    ```
-   > على Vercel الأنظمة عديمة القرار — للاستخدام الحقيقي انتقل إلى **PostgreSQL** (المسار 3) أو استضف على VPS.
-3. Deploy — وسيُبنى تلقائياً في كل دفعة إلى `main` (CI يحمي الجودة).
+   اختيارية حسب الحاجة:
+   ```
+   ZATCA_VAT_NUMBER="3000…"         # تفعيل الفاتورة الضريبية المبسطة (ZATCA)
+   ZATCA_SELLER_NAME="صيدلية رُبى"   # اسم البائع على الفاتورة
+   SENTRY_DSN / NEXT_PUBLIC_SENTRY_DSN   # مراقبة أخطاء — بلا مفاتيح لا يُهيأ شيء
+   ```
+   > لا تحتاج `NEON_API_KEY` على Vercel إطلاقاً — إنه مفتاح إدارة لإجراء الاختبارات المؤقتة فقط.
+4. Deploy — وسيُبنى تلقائياً في كل دفعة إلى `main` (CI يحمي الجودة)، والترحيلات لا تُنفذ عند البناء (فقط عند زر Actions أو يدوياً — لا عجلة مخطط مع كل deploy).
 
 ## المسار 2 — VPS / Docker (موصى به للصيدليات — بيانات داخل الصيدلية)
 
@@ -45,19 +56,33 @@ docker exec ruba-pharmacy cat /app/db/custom.db | gzip > backup-$(date +%F).db.g
 
 المشروع رُحّل رسمياً إلى Neon Postgres — المخطط والسكربتات جاهزة:
 
-1. أنشئ مشروعاً في [console.neon.tech](https://console.neon.tech) وانسخ السلسلتين (المجمّعة + المباشرة).
-2. املأ `.env` (انظر `.env.example`):
-   ```
-   DATABASE_URL="postgresql://USER:PASS@ep-XXXX-pooler.REGION.aws.neon.tech/neondb?sslmode=require"
-   DIRECT_URL="postgresql://USER:PASS@ep-XXXX.REGION.aws.neon.tech/neondb?sslmode=require"
-   ```
-   > المخطط مضبوط مسبقاً على `postgresql` مع `directUrl` — لا تعديل في الكود.
-3. التهيئة الكاملة (مخطط + بذر + سجل مرخص):
-   ```bash
-   bunx prisma db push
-   bun scripts/seed.ts && bun scripts/seed-drugs.ts && bun scripts/seed-national.ts
-   ```
-4. انشر بالطريقة 1 أو 2 مع متغيري البيئة نفسهين.
+1. أنشئ مشروعاً في [console.neon.tech](https://console.neon.tech) وانسخ السلسلتين (المجمّعة `-pooler` + المباشرة).
+
+### التهيئة بنقرة زر من GitHub Actions (الموصى بها — v4.6.1)
+
+بيئة التطوير المقيّدة شبكياً (أو أي جهاز بلا وصول لنطاقات Neon) تُتهيّا القاعدة من عدّاء GitHub — الأسرار في Secrets ولا شيء في الكود:
+
+1. أضف سرّين في المستودع (Settings → Secrets and variables → Actions → New repository secret):
+   - `NEON_DATABASE_URL` = السلسلة **المجمّعة** (تحتوي `-pooler`)
+   - `NEON_DIRECT_URL` = السلسلة **المباشرة** (بلا `-pooler`)
+2. تبويب **Actions ← «Neon DB Setup» ← Run workflow** واختر الوضع:
+   | الوضع | الاستخدام | ماذا يفعل |
+   |------|-----------|-----------|
+   | `catalog` | **إنتاج حقيقي** | ترحيلات + كتالوج الدواء والسجل الوطني (بلا مبيعات وهمية) |
+   | `full` | بيئة تجريبية كاملة | ترحيلات + مستخدمون/مخزون/مبيعات 30 يوماً + كتالوج |
+   | `baseline` | قاعدة قائمة كانت تعمل بـ `db push` | تسجيل `0_init` ثم تطبيق الترحيلات الأحدث — لا يمس البيانات |
+   | `migrate-only` | ترقية روتينية | تطبيق الترحيلات المعلقة فقط |
+3. تنتهي الخطوة الأخيرة بـ **تحقق حي** يطبع عدد الجداول والعدّادات — انسخه من سجل التشغيل للتوثيق.
+
+### التهيئة اليدوية (بديل الزر)
+
+```bash
+# .env محلي بالسلسلتين ثم:
+bun run db:migrate:deploy          # قاعدة جديدة
+bun scripts/seed.ts && bun scripts/seed-drugs.ts && bun scripts/seed-national.ts   # بذر كامل تجريبي
+# أو لقاعدة قائمة بنمط db push:
+bun run db:migrate:baseline        # ثم migrate deploy كما في الزر
+```
 
 ### مزايا Neon للصيدليات
 
@@ -145,8 +170,9 @@ bun run scripts/seed-drugs.ts
 المدير يُوجَّه لتفعيله عند الدخول. التعطيل يستلزم كوداً صحيحاً — كلمة
 المرور المسروقة وحدها لا تصلح.
 
-**CI:** `.github/workflows/ci.yml` — lint + tsc + 218 اختباراً + بناء
-على كل ضغطة وطلب دمج؛ الفشل يمنع الدمج.
+**CI:** `.github/workflows/ci.yml` — lint + tsc + 243 اختباراً + بناء
+على كل ضغطة وطلب دمج + جناح Playwright على Postgres خدمي؛ الفشل يمنع الدمج.
+و`neon-migrate.yml` — تهيئة/ترقية قاعدة Neon بنقرة زر (أعلاه).
 
 ## التأمين المالي وتعدد الفروع وPlaywright وSentry — v4.6
 
