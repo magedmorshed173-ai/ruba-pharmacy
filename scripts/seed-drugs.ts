@@ -59,6 +59,17 @@ async function main() {
       create: data,
       update: data,
     });
+    // v4.3 — مزامنة بوابة المريض الخاصة للمخزون الحي: فئة الحمل + حد العمر
+    // تُخزنان على Medicine نفسه ليقرأهما محرك البيع دون بحث إضافي
+    if (d.barcode && (d.preg || d.minAge)) {
+      await db.medicine.updateMany({
+        where: { barcode: d.barcode },
+        data: {
+          ...(d.preg ? { pregnancyCategory: d.preg } : {}),
+          ...(d.minAge ? { minAge: d.minAge } : {}),
+        },
+      });
+    }
     if (d.barcode) linked++;
   }
 

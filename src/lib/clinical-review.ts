@@ -18,6 +18,12 @@ import {
   type NationalEntryInput,
 } from "@/lib/national-license";
 import {
+  ageInYears,
+  ageRestrictionViolations,
+  pregnancyConflicts,
+  type GateAlert,
+} from "@/lib/patient-gate";
+import {
   buildRegistryAlerts,
   hasRegistryBlock,
   type RegistryAlert,
@@ -45,6 +51,10 @@ export interface ClinicalReview {
   registryAlerts: RegistryAlert[];
   /** حجب تنظيمي مطلق (معلق/محظور) — لا يقبل تجاوزاً سريرياً */
   registryBlocking: boolean;
+  /** بوابة الحمل (v4.3) — X حاجب، D تحذير، رضاعة X تحذير تحققي */
+  pregnancyAlerts: GateAlert[];
+  /** بوابة العمر (v4.3) — العمر دون الحد الأدنى المعتمد حاجب */
+  ageAlerts: GateAlert[];
   highestSeverity: InteractionSeverity | null;
   /** ممنوع سريرياً أو تعارض حساسية — يستلزم تجاوزاً مسؤولاً للإتمام */
   blocking: boolean;
@@ -65,6 +75,9 @@ export interface ReviewMeds {
   barcode?: string | null;
   dosage?: string | null;
   nationalDrugId?: string | null;
+  // v4.3 — بوابة المريض الخاصة (حمل/عمر)
+  pregnancyCategory?: string | null;
+  minAge?: number | null;
 }
 
 function mapHit(
@@ -206,11 +219,23 @@ export async function reviewCartClinical(
   );
   const allRegistryAlerts: RegistryAlert[] = [...registryAlerts, ...licenseAlerts];
 
+  // بوابة المريض الخاصة — v4.3: حمل/رضاعة + الحد الأدنى للعمر
+  // (تقبل تجاوز صيدلي مسؤول موثقاً — الفني محجوب، متسق مع البوابة السريرية)
+  const pregnancyAlerts = patient
+    ? pregnancyConflicts(cartMeds, patient.pregnancyStatus)
+    : [];
+  const patientAge = patient ? ageInYears(patient.dateOfBirth) : null;
+  const ageAlerts = ageRestrictionViolations(cartMeds, patientAge);
+
   const highestSeverity = interactions.reduce<InteractionSeverity | null>(
     (acc, h) =>
       !acc || SEVERITY_RANK[h.severity] > SEVERITY_RANK[acc] ? h.severity : acc,
     null
   );
+
+  const gateBlocking =
+    pregnancyAlerts.some((a) => a.severity === "blocking") ||
+    ageAlerts.some((a) => a.severity === "blocking");
 
   return {
     interactions,
@@ -218,8 +243,13 @@ export async function reviewCartClinical(
     duplicateTherapies,
     registryAlerts: allRegistryAlerts,
     registryBlocking: hasRegistryBlock(allRegistryAlerts),
+    pregnancyAlerts,
+    ageAlerts,
     highestSeverity,
-    blocking: highestSeverity === "contraindicated" || allergyAlerts.length > 0,
+    blocking:
+      highestSeverity === "contraindicated" ||
+      allergyAlerts.length > 0 ||
+      gateBlocking,
     checkedGenerics: [...cartGenerics, ...patientGenerics],
     patient: patient
       ? { id: patient.id, name: patient.name, allergies: patient.allergies }

@@ -44,7 +44,14 @@ export async function POST(request: NextRequest) {
           ...(medicineIds.length ? [{ id: { in: medicineIds } }] : []),
         ],
       },
-      select: { id: true, name: true, genericName: true, atcClass: true },
+      select: {
+        id: true,
+        name: true,
+        genericName: true,
+        atcClass: true,
+        pregnancyCategory: true,
+        minAge: true,
+      },
     });
 
     const review = await reviewCartClinical(meds, patientId || undefined);

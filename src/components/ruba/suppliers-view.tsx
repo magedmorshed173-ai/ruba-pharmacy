@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { api, fmtMoney, fmtDate } from "@/lib/api-client";
-import type { AuthUser } from "@/lib/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, fmtMoney, fmtDate, fmtNum } from "@/lib/api-client";
+import type { AuthUser, SmartRestockRow } from "@/lib/types";
+import { groupReorderRowsBySupplier } from "@/lib/reorder";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +33,7 @@ import {
   Plus,
   Truck,
   Ban,
+  Wand2,
 } from "lucide-react";
 
 // ─────────────── عرض الموردين وأوامر الشراء (v3.2) ───────────────
@@ -90,10 +92,16 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export function SuppliersView({ user }: { user: AuthUser }) {
-  const [tab, setTab] = useState<"suppliers" | "orders">("orders");
+  const [tab, setTab] = useState<"suppliers" | "orders" | "reorder">("orders");
   const [suppliers, setSuppliers] = useState<Supplier[] | null>(null);
   const [orders, setOrders] = useState<PurchaseOrder[] | null>(null);
   const canManage = user.role === "admin" || user.role === "pharmacist";
+
+  // إعادة الطلب الذكية — v4.3
+  const [reorderRows, setReorderRows] = useState<SmartRestockRow[] | null>(null);
+  const [reorderQty, setReorderQty] = useState<Record<string, string>>({});
+  const [creatingGroup, setCreatingGroup] = useState<string | null>(null);
+  const [manualSupplier, setManualSupplier] = useState<Record<string, string>>({});
 
   const [supplierDialog, setSupplierDialog] = useState(false);
   const [supplierForm, setSupplierForm] = useState({ name: "", phone: "", email: "", address: "", notes: "" });
@@ -134,6 +142,60 @@ export function SuppliersView({ user }: { user: AuthUser }) {
     loadSuppliers();
     loadOrders();
   }, [loadSuppliers, loadOrders]);
+
+  const loadReorder = useCallback(async () => {
+    try {
+      const r = await api<{ rows: SmartRestockRow[] }>("/api/reports/restock");
+      const need = r.rows.filter((x) => x.suggestedOrder > 0);
+      setReorderRows(need);
+      setReorderQty(Object.fromEntries(need.map((x) => [x.medicineId, String(x.suggestedOrder)])));
+    } catch {
+      toast.error("تعذر جلب مقترحات إعادة الطلب");
+      setReorderRows([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "reorder" && reorderRows === null) loadReorder();
+  }, [tab, reorderRows, loadReorder]);
+
+  const reorderGroups = useMemo(
+    () => (reorderRows ? groupReorderRowsBySupplier(reorderRows) : []),
+    [reorderRows]
+  );
+  const supplierName = (id: string) => suppliers?.find((s) => s.id === id)?.name ?? "مورد غير معروف";
+
+  async function createReorderPO(supplierId: string, rows: SmartRestockRow[], groupKey: string) {
+    const items = rows
+      .map((r) => ({
+        medicineId: r.medicineId,
+        quantity: parseInt(reorderQty[r.medicineId] ?? String(r.suggestedOrder), 10) || 0,
+        unitCost: r.purchasePrice ?? 0,
+      }))
+      .filter((i) => i.quantity > 0);
+    if (items.length === 0) {
+      toast.error("لا كميات صالحة في هذه المجموعة");
+      return;
+    }
+    setCreatingGroup(groupKey);
+    try {
+      await api("/api/purchase-orders", {
+        method: "POST",
+        json: {
+          supplierId,
+          items,
+          notes: `مقترح آلي من إعادة الطلب الذكية — سرعة صرف 30 يوماً`,
+        },
+      });
+      toast.success("أُنشئ أمر الشراء من المقترحات — بانتظار الاستلام");
+      loadOrders();
+      loadReorder();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر الإنشاء");
+    } finally {
+      setCreatingGroup(null);
+    }
+  }
 
   useEffect(() => {
     if (!poDialog) return;
@@ -266,6 +328,7 @@ export function SuppliersView({ user }: { user: AuthUser }) {
         {(
           [
             { k: "orders", label: "أوامر الشراء", icon: ClipboardList },
+            { k: "reorder", label: "إعادة الطلب الذكية", icon: Wand2 },
             { k: "suppliers", label: "الموردون", icon: Truck },
           ] as const
         ).map((t) => (
@@ -383,6 +446,152 @@ export function SuppliersView({ user }: { user: AuthUser }) {
                 </p>
               </div>
             ))}
+          </div>
+        ))}
+
+      {/* إعادة الطلب الذكية — v4.3 */}
+      {tab === "reorder" &&
+        (reorderRows === null ? (
+          <div className="flex justify-center py-16">
+            <Loader2 className="size-7 animate-spin text-teal-600" />
+          </div>
+        ) : reorderRows.length === 0 ? (
+          <div className="rounded-xl border border-dashed p-10 text-center">
+            <PackageCheck className="mx-auto size-10 text-emerald-500/50" />
+            <p className="mt-3 text-sm font-bold">كل الأرصدة فوق نقاط إعادة الطلب</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              لا شيء يستوجب الطلب الآن — الحساب مبني على سرعة صرف آخر 30 يوماً
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-teal-200 bg-teal-50 p-3 text-xs leading-relaxed text-teal-800 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+              <p className="font-bold">
+                <Wand2 className="me-1 inline size-3.5" />
+                كيف يُحسب المقترح؟
+              </p>
+              نقطة إعادة الطلب = السرعة اليومية × (زمن التوريد 7 أيام + أمان 7 أيام) — النزول
+              تحتها يستوجب الطلب حتى المستهدف (30 يوماً تغطية + التوريد). بلا مبيعات: يُملأ حتى
+              حد التنبيه فقط. عدّل أي كمية قبل الإنشاء.
+            </div>
+            {reorderGroups.map((g, gi) => {
+              const groupKey = g.supplierId ?? `null-${gi}`;
+              const groupTotal = g.rows.reduce(
+                (s, r) =>
+                  s + (parseInt(reorderQty[r.medicineId] ?? "", 10) || 0) * (r.purchasePrice ?? 0),
+                0
+              );
+              const chosenSupplier =
+                g.supplierId ?? manualSupplier[groupKey] ?? "";
+              return (
+                <div key={groupKey} className="rounded-xl border bg-card p-4 shadow-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Truck className="size-4 text-teal-600" />
+                    {g.supplierId ? (
+                      <span className="text-sm font-bold">{supplierName(g.supplierId)}</span>
+                    ) : (
+                      <>
+                        <span className="text-sm font-bold text-amber-600">
+                          بلا مورد معروف (لم تُشترَ سابقاً عبر النظام)
+                        </span>
+                        {canManage && (
+                          <select
+                            className="h-8 rounded-md border bg-card px-2 text-xs"
+                            value={chosenSupplier}
+                            onChange={(e) =>
+                              setManualSupplier({ ...manualSupplier, [groupKey]: e.target.value })
+                            }
+                          >
+                            <option value="">— اختر المورد —</option>
+                            {activeSuppliers.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </>
+                    )}
+                    <Badge variant="outline" className="num text-xs">
+                      {g.rows.length} صنفاً
+                    </Badge>
+                    <span className="num ms-auto text-sm font-bold text-teal-600 dark:text-teal-400">
+                      ≈ {fmtMoney(groupTotal)} ر.س
+                    </span>
+                    {canManage && (
+                      <Button
+                        size="sm"
+                        className="bg-teal-600 hover:bg-teal-700"
+                        disabled={!chosenSupplier || creatingGroup === groupKey}
+                        onClick={() => createReorderPO(chosenSupplier, g.rows, groupKey)}
+                      >
+                        {creatingGroup === groupKey ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <ClipboardList className="size-4" />
+                        )}
+                        إنشاء أمر شراء
+                      </Button>
+                    )}
+                  </div>
+                  <div className="mt-3 overflow-x-auto rounded-lg border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">الدواء</TableHead>
+                          <TableHead className="text-center text-xs">الرصيد</TableHead>
+                          <TableHead className="hidden text-center text-xs sm:table-cell">سرعة/يوم</TableHead>
+                          <TableHead className="hidden text-center text-xs md:table-cell">التغطية</TableHead>
+                          <TableHead className="text-center text-xs">نقطة الطلب</TableHead>
+                          <TableHead className="text-center text-xs">تكلفة الوحدة</TableHead>
+                          <TableHead className="text-center text-xs">كمية الطلب</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {g.rows.map((r) => (
+                          <TableRow key={r.medicineId}>
+                            <TableCell>
+                              <p className="text-sm font-bold">{r.name}</p>
+                              <p className="num text-[11px] text-muted-foreground" dir="ltr">
+                                {r.barcode}
+                              </p>
+                            </TableCell>
+                            <TableCell className="num text-center text-sm">{r.quantity}</TableCell>
+                            <TableCell className="num hidden text-center text-muted-foreground sm:table-cell">
+                              {r.dailyVelocity.toFixed(2)}
+                            </TableCell>
+                            <TableCell className="num hidden text-center md:table-cell">
+                              {r.daysOfCover === null ? "—" : `${r.daysOfCover} يوم`}
+                            </TableCell>
+                            <TableCell className="num text-center text-xs">
+                              {r.reorderPoint ?? "—"}
+                            </TableCell>
+                            <TableCell className="num text-center text-xs">
+                              {fmtMoney(r.purchasePrice ?? 0)}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {canManage ? (
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  className="num mx-auto h-8 w-20 text-center text-sm"
+                                  value={reorderQty[r.medicineId] ?? String(r.suggestedOrder)}
+                                  onChange={(e) =>
+                                    setReorderQty({ ...reorderQty, [r.medicineId]: e.target.value })
+                                  }
+                                />
+                              ) : (
+                                <span className="num font-bold">+{fmtNum(r.suggestedOrder)}</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ))}
 

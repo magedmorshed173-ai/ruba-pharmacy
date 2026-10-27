@@ -25,7 +25,9 @@ import { toast } from "sonner";
 import { BarcodeScanner } from "./barcode-scanner";
 import {
   AlertTriangle,
+  Baby,
   Ban,
+  Cake,
   CheckCircle2,
   ClipboardCheck,
   Landmark,
@@ -123,7 +125,9 @@ function ClinicalReviewCard({ review }: { review: ClinicalReview }) {
     review.interactions.length === 0 &&
     review.allergyAlerts.length === 0 &&
     review.duplicateTherapies.length === 0 &&
-    (review.registryAlerts?.length ?? 0) === 0;
+    (review.registryAlerts?.length ?? 0) === 0 &&
+    (review.pregnancyAlerts?.length ?? 0) === 0 &&
+    (review.ageAlerts?.length ?? 0) === 0;
   return (
     <div className="rounded-xl border p-3 space-y-2">
       <div className="flex items-center gap-2 text-sm font-bold">
@@ -177,12 +181,38 @@ function ClinicalReviewCard({ review }: { review: ClinicalReview }) {
           تعارض حساسية: المريض لديه حساسية «{a.allergy}» والبند يحويها
         </div>
       ))}
+      {(review.pregnancyAlerts ?? []).map((a, i) => (
+        <div
+          key={`p${i}`}
+          className={
+            a.severity === "blocking"
+              ? "rounded-lg border border-rose-400 bg-rose-600/10 p-2 text-[13px] font-bold text-rose-700 dark:text-rose-400"
+              : "rounded-lg border border-fuchsia-300 bg-fuchsia-50 dark:bg-fuchsia-500/10 p-2 text-[13px] text-fuchsia-700 dark:text-fuchsia-400"
+          }
+        >
+          <span className="inline-flex items-center gap-1">
+            <Baby className="size-3" /> بوابة الحمل:
+          </span>{" "}
+          {a.message}
+        </div>
+      ))}
+      {(review.ageAlerts ?? []).map((a, i) => (
+        <div
+          key={`age${i}`}
+          className="rounded-lg border border-rose-400 bg-rose-600/10 p-2 text-[13px] font-bold text-rose-700 dark:text-rose-400"
+        >
+          <span className="inline-flex items-center gap-1">
+            <Cake className="size-3" /> بوابة العمر:
+          </span>{" "}
+          {a.message}
+        </div>
+      ))}
       {review.duplicateTherapies.map((d, i) => (
         <div
           key={`d${i}`}
           className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-500/10 p-2 text-[13px] text-amber-700 dark:text-amber-400"
         >
-          تكرار علاجي ({d.atcClass ?? d.family}): {d.members.join("، ")}
+          تكرار علاجي ({d.atcClass}): {d.names.join("، ")}
         </div>
       ))}
       {(review.registryAlerts ?? []).map((a, i) => (

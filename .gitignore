@@ -67,3 +67,4 @@ Caddyfile
 .tmp-e2e/
 .ks-pass-tmp
 db/*.db-*
+tool-results/

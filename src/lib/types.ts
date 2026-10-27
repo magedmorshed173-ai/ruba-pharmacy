@@ -40,6 +40,9 @@ export interface Medicine {
   maxRetailPrice?: number | null;
   reservedQty?: number;
   availableQuantity?: number;
+  // بوابة المريض الخاصة — v4.3
+  pregnancyCategory?: string | null;
+  minAge?: number | null;
 }
 
 export interface StockMovement {
@@ -87,6 +90,8 @@ export interface Patient {
   phone?: string | null;
   chronicMedications?: string | null;
   allergies?: string | null;
+  dateOfBirth?: string | null;
+  pregnancyStatus?: "none" | "pregnant" | "breastfeeding";
   createdAt: string;
 }
 
@@ -126,11 +131,23 @@ export interface DuplicateGroup {
   names: string[];
 }
 
+/** تنبيه بوابة المريض الخاصة (حمل/عمر) — v4.3 */
+export interface GateAlert {
+  medicineId?: string;
+  medicine: string;
+  kind: "pregnancy_x" | "pregnancy_d" | "pregnancy_breastfeeding" | "age_restriction";
+  severity: "blocking" | "warning";
+  message: string;
+  note: string;
+}
+
 /** نتيجة الفحص السريري الشامل للسلة */
 export interface ClinicalReview {
   interactions: InteractionHit[];
   allergyAlerts: AllergyHit[];
   duplicateTherapies: DuplicateGroup[];
+  pregnancyAlerts?: GateAlert[];
+  ageAlerts?: GateAlert[];
   highestSeverity: InteractionHit["severity"] | null;
   blocking: boolean;
   checkedGenerics: string[];
@@ -154,8 +171,14 @@ export interface SmartRestockRow {
   name: string;
   barcode: string;
   quantity: number;
+  minQuantity: number;
+  purchasePrice?: number;
   soldLast30: number;
   dailyVelocity: number;
   daysOfCover: number | null;
+  reorderPoint?: number;
+  targetStock?: number;
   suggestedOrder: number;
+  velocityBased?: boolean;
+  lastSupplierId?: string | null;
 }

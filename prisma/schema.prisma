@@ -1,4 +1,4 @@
-// ربي فارمسي — Ruba Pharmacy Platform v4.2 (Web)
+// ربي فارمسي — Ruba Pharmacy Platform v4.4 (Web)
 // ملاحظة هندسية: تُخزَّن النقود كأعداد صحيحة بالهللات (1 ريال = 100 هللة)
 // — المعيار العالمي للدقة المالية (نمط Stripe).
 // الكميات تُخزَّن كأعداد صحيحة (وحدات) — يوحِّد عدم اتساق v2.0 (Decimal مقابل Int).
@@ -66,6 +66,8 @@ model Medicine {
   registryStatus       String   @default("registered") // registered | suspended | banned | unregistered
   maxRetailPrice       Int? // سقف السعر البيعي الوطني (هللات) — تجاوزه إنذار تسعيري
   nationalDrugId       String? // ربط المنتج المحلي بسجله المرخص الوطني (v4.1)
+  pregnancyCategory    String? // فئة الحمل FDA (A B C D X) — أساس بوابة الحمل (v4.3)
+  minAge               Int? // الحد الأدنى للعمر (سنوات) — أساس بوابة العمر (v4.3)
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
@@ -363,6 +365,8 @@ model Patient {
   phone              String?
   chronicMedications String?
   allergies          String?
+  dateOfBirth        DateTime? // تاريخ الميلاد — أساس فحص الحد الأدنى للعمر (v4.3)
+  pregnancyStatus    String   @default("none") // none | pregnant | breastfeeding — بوابة الحمل (v4.3)
   createdAt          DateTime @default(now())
 
   @@index([name])

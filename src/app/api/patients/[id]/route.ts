@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { fail, ok, requireAuth } from "@/lib/api-guard";
+import { PREGNANCY_STATUSES, type PregnancyStatus } from "@/lib/patient-gate";
 
 // PUT /api/patients/:id
 export async function PUT(
@@ -23,6 +24,23 @@ export async function PUT(
       data.chronicMedications = String(body.chronicMedications).trim() || null;
     if (body.allergies !== undefined)
       data.allergies = String(body.allergies).trim() || null;
+    if (body.dateOfBirth !== undefined) {
+      const raw = String(body.dateOfBirth ?? "").trim();
+      if (!raw) {
+        data.dateOfBirth = null;
+      } else {
+        const d = new Date(raw);
+        if (Number.isNaN(d.getTime()) || d.getTime() > Date.now())
+          return fail("تاريخ الميلاد غير صالح");
+        data.dateOfBirth = d;
+      }
+    }
+    if (body.pregnancyStatus !== undefined) {
+      const st = String(body.pregnancyStatus ?? "").trim().toLowerCase();
+      if (!(PREGNANCY_STATUSES as string[]).includes(st))
+        return fail("حالة الحمل غير صالحة");
+      data.pregnancyStatus = st as PregnancyStatus;
+    }
 
     if (body.nationalId !== undefined) {
       const nid = String(body.nationalId).trim();

@@ -1,49 +1,88 @@
 import { db } from "@/lib/db";
 import { fail, ok, requireAuth } from "@/lib/api-guard";
+import { computeReorderMetrics, groupReorderRowsBySupplier } from "@/lib/reorder";
 
-// GET /api/reports/restock — التنبؤ الذكي بإعادة الطلب
-// يحسب سرعة البيع اليومية وأيام التغطية واقترح كمية الطلب
+/**
+ * GET /api/reports/restock — إعادة الطلب الذكية القابلة للتنفيذ (v4.3)
+ * v3.3 كانت تحسب «الفرق حتى 30 يوماً» دوماً؛ الآن نموذج نقطة إعادة الطلب:
+ * لا طلب إلا عند نزول التغطية تحت (زمن التوريد + الأمان)، وبلا مبيعات
+ * نسقط محافظين إلى حد التنبيه اليدوي. الاستجابة تحتفظ بحقول v3.3
+ * (توافق كامل مع التقارير) وتضيف: reorderPoint، المورد الأخير، سعر الشراء.
+ */
 export async function GET() {
   const { error } = await requireAuth();
   if (error) return error;
 
   try {
     const WINDOW = 30;
+    const LEAD_DAYS = 7;
+    const SAFETY_DAYS = 7;
     const since = new Date(Date.now() - WINDOW * 86400000);
 
-    const sold = await db.saleItem.groupBy({
-      by: ["medicineId"],
-      _sum: { quantity: true },
-      where: {
-        sale: { saleDate: { gte: since }, status: "completed" },
-      },
-    });
-    const soldMap = new Map(sold.map((s) => [s.medicineId, s._sum.quantity ?? 0]));
+    const [sold, medicines, lastPOItems] = await Promise.all([
+      db.saleItem.groupBy({
+        by: ["medicineId"],
+        _sum: { quantity: true },
+        where: {
+          sale: { saleDate: { gte: since }, status: "completed" },
+        },
+      }),
+      db.medicine.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          barcode: true,
+          quantity: true,
+          minQuantity: true,
+          purchasePrice: true,
+        },
+      }),
+      // المورد الأخير لكل دواء — من أحدث أمر شراء غير ملغى (أساس تجميع الأوامر)
+      db.purchaseOrderItem.findMany({
+        where: { po: { status: { not: "cancelled" } } },
+        select: {
+          medicineId: true,
+          unitCost: true,
+          po: { select: { supplierId: true, createdAt: true } },
+        },
+        orderBy: { po: { createdAt: "desc" } },
+        take: 500,
+      }),
+    ]);
 
-    const medicines = await db.medicine.findMany({
-      where: { isActive: true },
-      select: { id: true, name: true, barcode: true, quantity: true, minQuantity: true },
-    });
+    const soldMap = new Map(sold.map((s) => [s.medicineId, s._sum.quantity ?? 0]));
+    const supplierMap = new Map<string, string>(); // أول ظهور = الأحدث زمنياً
+    for (const item of lastPOItems) {
+      if (!supplierMap.has(item.medicineId) && item.po.supplierId)
+        supplierMap.set(item.medicineId, item.po.supplierId);
+    }
 
     const rows = medicines.map((m) => {
-      const sold30 = soldMap.get(m.id) ?? 0;
-      const dailyVelocity = sold30 / WINDOW;
-      const daysOfCover = dailyVelocity > 0 ? m.quantity / dailyVelocity : null;
-      // اقتراح الطلب: تغطية 30 يوماً القادمة مطروحاً منها المتوفر (حد أدنى حد التنبيه)
-      const target = Math.ceil(dailyVelocity * 30);
-      const suggestedOrder =
-        dailyVelocity > 0 ? Math.max(0, target - m.quantity) : Math.max(0, m.minQuantity - m.quantity);
-
+      const metrics = computeReorderMetrics({
+        quantity: m.quantity,
+        minQuantity: m.minQuantity,
+        soldQty: soldMap.get(m.id) ?? 0,
+        windowDays: WINDOW,
+        leadDays: LEAD_DAYS,
+        safetyDays: SAFETY_DAYS,
+      });
+      const supplierId = supplierMap.get(m.id) ?? null;
       return {
         medicineId: m.id,
         name: m.name,
         barcode: m.barcode,
         quantity: m.quantity,
         minQuantity: m.minQuantity,
-        soldLast30: sold30,
-        dailyVelocity: Math.round(dailyVelocity * 1000) / 1000,
-        daysOfCover: daysOfCover === null ? null : Math.round(daysOfCover * 10) / 10,
-        suggestedOrder,
+        purchasePrice: m.purchasePrice,
+        soldLast30: soldMap.get(m.id) ?? 0,
+        dailyVelocity: metrics.dailyVelocity,
+        daysOfCover: metrics.daysOfCover,
+        reorderPoint: metrics.reorderPoint,
+        targetStock: metrics.targetStock,
+        suggestedOrder: metrics.suggestedOrder,
+        velocityBased: metrics.velocityBased,
+        lastSupplierId: supplierId,
       };
     });
 
@@ -55,7 +94,18 @@ export async function GET() {
       return a.daysOfCover - b.daysOfCover;
     });
 
-    return ok({ rows, windowDays: WINDOW });
+    // تجميع جاهز للمورد — بند الطبقة النقية نفسها المستخدمة في الواجهة
+    const groups = groupReorderRowsBySupplier(
+      rows.filter((r) => r.suggestedOrder > 0)
+    ).map((g) => ({ supplierId: g.supplierId, count: g.rows.length }));
+
+    return ok({
+      rows,
+      groups,
+      windowDays: WINDOW,
+      leadDays: LEAD_DAYS,
+      safetyDays: SAFETY_DAYS,
+    });
   } catch (e) {
     console.error("restock report error", e);
     return fail("تعذر جلب تقرير إعادة الطلب", 500);

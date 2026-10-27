@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, fmtDate, SEVERITY_LABEL } from "@/lib/api-client";
 import type { AuthUser, Patient, InteractionHit } from "@/lib/types";
+import { ageInYears, PREGNANCY_STATUS_LABEL } from "@/lib/patient-gate";
 import { EmptyState, LoadingRows } from "./shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +38,15 @@ import {
 } from "lucide-react";
 
 const RANK: Record<string, number> = { technician: 1, pharmacist: 2, admin: 3 };
-const EMPTY = { name: "", nationalId: "", phone: "", chronicMedications: "", allergies: "" };
+const EMPTY = {
+  name: "",
+  nationalId: "",
+  phone: "",
+  chronicMedications: "",
+  allergies: "",
+  dateOfBirth: "",
+  pregnancyStatus: "none",
+};
 
 export function PatientsView({ user }: { user: AuthUser }) {
   const canDelete = (RANK[user.role] ?? 0) >= 2;
@@ -82,6 +91,8 @@ export function PatientsView({ user }: { user: AuthUser }) {
       phone: p.phone ?? "",
       chronicMedications: p.chronicMedications ?? "",
       allergies: p.allergies ?? "",
+      dateOfBirth: p.dateOfBirth ? p.dateOfBirth.slice(0, 10) : "",
+      pregnancyStatus: p.pregnancyStatus ?? "none",
     });
     setFormOpen(true);
   }
@@ -200,11 +211,24 @@ export function PatientsView({ user }: { user: AuthUser }) {
                       </div>
                       <div>
                         <p className="text-sm font-bold">{p.name}</p>
-                        {p.allergies && (
-                          <p className="flex items-center gap-1 text-xs text-rose-600">
-                            <ShieldAlert className="size-3" /> حساسية: {p.allergies}
-                          </p>
-                        )}
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          {p.allergies && (
+                            <p className="flex items-center gap-1 text-xs text-rose-600">
+                              <ShieldAlert className="size-3" /> حساسية: {p.allergies}
+                            </p>
+                          )}
+                          {(() => {
+                            const age = ageInYears(p.dateOfBirth);
+                            return age !== null ? (
+                              <span className="num text-xs text-muted-foreground">{age} سنة</span>
+                            ) : null;
+                          })()}
+                          {p.pregnancyStatus && p.pregnancyStatus !== "none" && (
+                            <span className="rounded-full bg-fuchsia-100 px-2 py-0.5 text-[10px] font-bold text-fuchsia-700 dark:bg-fuchsia-500/15 dark:text-fuchsia-400">
+                              {PREGNANCY_STATUS_LABEL[p.pregnancyStatus]}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </TableCell>
@@ -289,6 +313,33 @@ export function PatientsView({ user }: { user: AuthUser }) {
                 onChange={(e) => setForm({ ...form, allergies: e.target.value })}
                 placeholder="مثال: بنسلين…"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label>تاريخ الميلاد</Label>
+              <Input
+                type="date"
+                value={form.dateOfBirth}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                يفعّل فحص الحد الأدنى للعمر عند البيع
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>الحالة الخاصة</Label>
+              <select
+                className="h-9 w-full rounded-md border bg-card px-3 text-sm"
+                value={form.pregnancyStatus}
+                onChange={(e) => setForm({ ...form, pregnancyStatus: e.target.value })}
+              >
+                <option value="none">لا ينطبق</option>
+                <option value="pregnant">حامل</option>
+                <option value="breastfeeding">مرضعة</option>
+              </select>
+              <p className="text-[10px] text-muted-foreground">
+                يفعّل فحص فئات حمل FDA عند البيع
+              </p>
             </div>
           </div>
           <DialogFooter>

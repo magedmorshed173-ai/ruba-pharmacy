@@ -9,6 +9,7 @@ import type {
   ClinicalReview,
   Patient,
 } from "@/lib/types";
+import type { AlternativeSuggestion } from "@/lib/alternatives";
 import { StockBadge, ExpiryBadge } from "./shared";
 import { BarcodeScanner } from "./barcode-scanner";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,9 @@ import {
   Printer,
   ShieldAlert,
   UserRound,
+  Repeat2,
+  Baby,
+  Cake,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -109,7 +113,11 @@ const SEV_TEXT: Record<string, string> = {
 
 function hasFindings(r: ClinicalReview): boolean {
   return (
-    r.interactions.length > 0 || r.allergyAlerts.length > 0 || r.duplicateTherapies.length > 0
+    r.interactions.length > 0 ||
+    r.allergyAlerts.length > 0 ||
+    r.duplicateTherapies.length > 0 ||
+    (r.pregnancyAlerts?.length ?? 0) > 0 ||
+    (r.ageAlerts?.length ?? 0) > 0
   );
 }
 
@@ -128,6 +136,11 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
   const [patientId, setPatientId] = useState("none");
   const [result, setResult] = useState<CheckoutResult | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // البدائل العلاجية عند النفاد — v4.3
+  const [altTarget, setAltTarget] = useState<Medicine | null>(null);
+  const [altList, setAltList] = useState<AlternativeSuggestion[] | null>(null);
+  const [altLoading, setAltLoading] = useState(false);
 
   async function loadMeds(query = "") {
     try {
@@ -283,6 +296,46 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
     }
   }
 
+  /** بدائل علاجية عند النفاد (v4.3): نفس الفئة العلاجية المتوفرة فعلاً */
+  async function openAlternatives(m: Medicine) {
+    setAltTarget(m);
+    setAltList(null);
+    setAltLoading(true);
+    try {
+      const r = await api<{ alternatives: AlternativeSuggestion[] }>(
+        `/api/medicines/${m.id}/alternatives`
+      );
+      setAltList(r.alternatives);
+    } catch {
+      toast.error("تعذر جلب البدائل العلاجية");
+      setAltTarget(null);
+    } finally {
+      setAltLoading(false);
+    }
+  }
+
+  /** إضافة بديل للسلة — الكمية المتاحة معروضة أصلاً بعد خصم المحجوز */
+  function addAlternative(a: AlternativeSuggestion) {
+    const med: Medicine = {
+      id: a.id,
+      name: a.name,
+      genericName: a.genericName,
+      categoryId: "",
+      category: { id: "", name: "" },
+      barcode: "",
+      purchasePrice: 0,
+      sellingPrice: a.sellingPrice,
+      quantity: a.availableQuantity,
+      minQuantity: 0,
+      expiryDate: "",
+      requiresPrescription: a.requiresPrescription,
+      isActive: true,
+    };
+    addToCart(med);
+    toast.success(`أُضيف البديل: ${a.name}`);
+    setAltTarget(null);
+  }
+
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_400px]">
       {/* شبكة الأدوية */}
@@ -318,11 +371,10 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
               return (
                 <button
                   key={m.id}
-                  disabled={out}
-                  onClick={() => addToCart(m)}
+                  onClick={() => (out ? openAlternatives(m) : addToCart(m))}
                   className={cn(
                     "group relative flex flex-col rounded-xl border bg-card p-3 text-start shadow-sm transition-all hover:-translate-y-0.5 hover:border-teal-300 hover:shadow-md",
-                    out && "cursor-not-allowed opacity-55 hover:translate-y-0",
+                    out && "opacity-55 hover:translate-y-0 hover:border-amber-300",
                     inCart > 0 && "border-teal-500 ring-1 ring-teal-500/40"
                   )}
                 >
@@ -350,6 +402,11 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
                   {m.quantity <= m.minQuantity && (
                     <div className="mt-1.5">
                       <StockBadge quantity={m.quantity} minQuantity={m.minQuantity} />
+                    </div>
+                  )}
+                  {out && (
+                    <div className="mt-1.5 flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                      <Repeat2 className="size-3" /> انقر لعرض البدائل العلاجية
                     </div>
                   )}
                 </button>
@@ -389,6 +446,40 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
                   {review.allergyAlerts.map((a, i) => (
                     <li key={i} className="text-[11px] leading-relaxed text-rose-800 dark:text-rose-300">
                       <span className="font-bold">{a.medicine}</span> — حساسية المريض: «{a.allergy}» ({a.familyAr})
+                      <span className="block opacity-80">{a.note}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {(review.pregnancyAlerts?.length ?? 0) > 0 && (
+              <div className="rounded-lg border border-fuchsia-300 bg-fuchsia-50 p-3 dark:border-fuchsia-500/40 dark:bg-fuchsia-500/10">
+                <p className="flex items-center gap-1.5 text-xs font-bold text-fuchsia-700 dark:text-fuchsia-400">
+                  <Baby className="size-4" />
+                  بوابة الحمل ({review.pregnancyAlerts!.length})
+                </p>
+                <ul className="mt-1.5 space-y-1.5">
+                  {review.pregnancyAlerts!.map((a, i) => (
+                    <li key={i} className="text-[11px] leading-relaxed text-fuchsia-800 dark:text-fuchsia-300">
+                      <span className="font-bold">{a.medicine}</span> — {a.message}
+                      <span className="block opacity-80">{a.note}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {(review.ageAlerts?.length ?? 0) > 0 && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-500/40 dark:bg-amber-500/10">
+                <p className="flex items-center gap-1.5 text-xs font-bold text-amber-700 dark:text-amber-400">
+                  <Cake className="size-4" />
+                  بوابة العمر ({review.ageAlerts!.length})
+                </p>
+                <ul className="mt-1.5 space-y-1.5">
+                  {review.ageAlerts!.map((a, i) => (
+                    <li key={i} className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                      <span className="font-bold">{a.medicine}</span> — {a.message}
                       <span className="block opacity-80">{a.note}</span>
                     </li>
                   ))}
@@ -464,7 +555,11 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
           <div className="mx-3 mt-3 rounded-lg border-2 border-rose-400 bg-rose-50 p-3 dark:border-rose-500/50 dark:bg-rose-500/10">
             <p className="flex items-center gap-1.5 text-xs font-bold text-rose-700 dark:text-rose-400">
               <ShieldAlert className="size-4" />
-              البيع محجوب — {blocked.interactions.some((i) => i.severity === "contraindicated")
+              البيع محجوب — {blocked.pregnancyAlerts?.some((a) => a.severity === "blocking")
+                ? "تعارض مع الحمل (فئة X)"
+                : blocked.ageAlerts?.some((a) => a.severity === "blocking")
+                ? "العمر أقل من الحد المعتمد"
+                : blocked.interactions.some((i) => i.severity === "contraindicated")
                 ? "ممنوع سريرياً"
                 : "تعارض حساسية"}
             </p>
@@ -737,6 +832,85 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
               عملية جديدة
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* نافذة البدائل العلاجية عند النفاد — v4.3 */}
+      <Dialog open={!!altTarget} onOpenChange={(o) => !o && setAltTarget(null)}>
+        <DialogContent className="sm:max-w-lg" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Repeat2 className="size-5 text-amber-600" />
+              «{altTarget?.name}» غير متوفر — بدائل علاجية
+            </DialogTitle>
+            <DialogDescription>
+              من نفس الفئة العلاجية (ATC) والمتوفر فعلاً بالرصيد الصالح — الجنيس المكافئ أولاً
+            </DialogDescription>
+          </DialogHeader>
+          {altLoading ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="size-6 animate-spin text-amber-600" />
+            </div>
+          ) : !altList || altList.length === 0 ? (
+            <p className="rounded-lg border bg-muted/40 p-6 text-center text-sm text-muted-foreground">
+              لا يوجد بديل متوفر من نفس الفئة العلاجية حالياً — راجع تبويب إعادة الطلب الذكية
+            </p>
+          ) : (
+            <div className="max-h-80 space-y-2 overflow-y-auto pe-1">
+              {altList!.map((a) => (
+                <div
+                  key={a.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 truncate text-sm font-bold">
+                      {a.name}
+                      {a.sameGeneric && (
+                        <Badge className="h-4 bg-emerald-100 px-1.5 text-[9px] text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">
+                          نفس المادة الفعالة
+                        </Badge>
+                      )}
+                      {a.requiresPrescription && (
+                        <Badge variant="outline" className="h-4 px-1.5 text-[9px]">
+                          وصفة
+                        </Badge>
+                      )}
+                    </p>
+                    <p className="num mt-0.5 text-[11px] text-muted-foreground">
+                      {a.genericName}
+                      {a.dosage ? ` · ${a.dosage}` : ""} · متاح {a.availableQuantity}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <span className="num text-sm font-extrabold text-teal-700 dark:text-teal-400">
+                      {fmtMoney(a.sellingPrice)} ر.س
+                    </span>
+                    <span
+                      className={cn(
+                        "num text-[10px] font-bold",
+                        a.priceDiff < 0
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : a.priceDiff > 0
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-muted-foreground"
+                      )}
+                    >
+                      {a.priceDiff === 0
+                        ? "نفس السعر"
+                        : `${a.priceDiff < 0 ? "أرخص" : "أغلى"} بـ ${fmtMoney(Math.abs(a.priceDiff))}`}
+                    </span>
+                    <Button
+                      size="sm"
+                      className="h-7 bg-teal-600 text-xs hover:bg-teal-700"
+                      onClick={() => addAlternative(a)}
+                    >
+                      <Plus className="size-3" /> استبدال
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

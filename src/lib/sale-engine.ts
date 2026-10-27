@@ -91,6 +91,9 @@ export async function reviewSaleItems(
       barcode: true,
       dosage: true,
       nationalDrugId: true,
+      // v4.3 — بوابة المريض الخاصة (حمل/عمر)
+      pregnancyCategory: true,
+      minAge: true,
     },
   });
   return reviewCartClinical(reviewMeds, patientId ?? undefined);

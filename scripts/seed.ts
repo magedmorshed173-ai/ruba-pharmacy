@@ -94,14 +94,16 @@ const ATC_INFO: Record<string, { atcCode: string; atcClass: string; maxDailyDose
   "isosorbide dinitrate": { atcCode: "C01DA08", atcClass: "C01DA — نترات عضوية" },
 };
 
-// قاعدة التداخلات السريرية — كل سجل: [المادة أ، المادة ب، الشدة، الوصف، الآلية، الأثر السريري، الإدارة، الأدلة، المصدر، البدء]
+// قاعدة التداخلات السريرية — كل سجل: [الاسم، الهوية، الهاتف، المزمن، الحساسية، تاريخ الميلاد، الحالة الخاصة]
 // مصادر التصنيف: Stockley's Drug Interactions، Lexicomp، تحذيرات FDA الرسمية
-const PATIENTS: [string, string, string, string, string][] = [
-  ["عبدالله محمد القحطاني", "1098447213", "0551234567", "warfarin, amlodipine, atorvastatin", "بنسلين"],
-  ["فاطمة سعد الدوسري", "1077234518", "0567891234", "metformin, gliclazide", ""],
-  ["خالد ناصر العتيبي", "1044558821", "0509876543", "salbutamol, montelukast", "أسبرين"],
-  ["نورة فهد الشهري", "1022887734", "0533221144", "levothyroxine", ""],
-  ["محمد عمر الزهراني", "1088665512", "0544556677", "losartan, atorvastatin, aspirin", "لاكتوز"],
+// v4.3: تاريخ الميلاد + حالة الحمل — أساس بوابة المريض الخاصة (حمل/عمر)
+const PATIENTS: [string, string, string, string, string, string | null, string][] = [
+  ["عبدالله محمد القحطاني", "1098447213", "0551234567", "warfarin, amlodipine, atorvastatin", "بنسلين", "1978-03-14", "none"],
+  ["فاطمة سعد الدوسري", "1077234518", "0567891234", "metformin, gliclazide", "", "1993-11-02", "pregnant"],
+  ["خالد ناصر العتيبي", "1044558821", "0509876543", "salbutamol, montelukast", "أسبرين", "1985-07-21", "none"],
+  ["نورة فهد الشهري", "1022887734", "0533221144", "levothyroxine", "", "1990-01-30", "breastfeeding"],
+  ["محمد عمر الزهراني", "1088665512", "0544556677", "losartan, atorvastatin, aspirin", "لاكتوز", "1968-09-05", "none"],
+  ["عبدالرحمن سالم الغامدي", "1122334455", "0577889900", "", "", "2017-04-12", "none"],
 ];
 
 
@@ -281,20 +283,68 @@ async function main() {
   }
 
   // 5) المرضى
-  for (const [name, nid, phone, chronic, allergy] of PATIENTS) {
+  for (const [name, nid, phone, chronic, allergy, dob, preg] of PATIENTS) {
     await db.patient.upsert({
       where: { nationalId: nid },
-      update: {},
+      update: {
+        dateOfBirth: dob ? new Date(dob) : null,
+        pregnancyStatus: preg,
+      },
       create: {
         name,
         nationalId: nid,
         phone,
         chronicMedications: chronic,
         allergies: allergy || null,
+        dateOfBirth: dob ? new Date(dob) : null,
+        pregnancyStatus: preg,
       },
     });
   }
-  console.log(`✓ ${PATIENTS.length} مرضى`);
+  console.log(`✓ ${PATIENTS.length} مرضى (بوابة الحمل والعمر مفعّلة)`);
+
+  // 5.5) الموردون + أمر شراء تاريخي — v4.3
+  // يغذي تبويب «إعادة الطلب الذكية»: تجميع المقترحات بالمورد الأخير لكل دواء
+  const SUPPLIERS = [
+    { name: "شركة الدواء المتحدة", phone: "0112223344", email: "sales@udc.sa", address: "الرياض — المنطقة الصناعية الثانية" },
+    { name: "مستودع الصحة للتوريد الدوائي", phone: "0115556677", email: "info@health-supply.sa", address: "جدة — حي الصناعية" },
+  ];
+  const supplierIds: Record<string, string> = {};
+  for (const s of SUPPLIERS) {
+    const sup = await db.supplier.upsert({ where: { name: s.name }, update: {}, create: s });
+    supplierIds[s.name] = sup.id;
+  }
+  console.log(`✓ ${SUPPLIERS.length} موردون`);
+
+  const anchorMed = await db.medicine.findUnique({ where: { barcode: "6281001000011" } });
+  const firstSupplierId = supplierIds[SUPPLIERS[0].name];
+  if (anchorMed && firstSupplierId) {
+    const poExists = await db.purchaseOrder.findFirst({ where: { supplierId: firstSupplierId } });
+    if (!poExists) {
+      await db.purchaseOrder.create({
+        data: {
+          number: 1,
+          supplierId: firstSupplierId,
+          status: "received",
+          notes: "أمر شراء افتتاحي بذري — يغذي استنتاج المورد الأخير",
+          createdAt: new Date(Date.now() - 25 * 86400000),
+          receivedAt: new Date(Date.now() - 20 * 86400000),
+          totalHalalas: anchorMed.purchasePrice * 50,
+          items: {
+            create: [
+              {
+                medicineId: anchorMed.id,
+                quantity: 50,
+                unitCost: anchorMed.purchasePrice,
+                receivedQty: 50,
+              },
+            ],
+          },
+        },
+      });
+      console.log("✓ أمر شراء تاريخي: أدول 500 ← شركة الدواء المتحدة");
+    }
+  }
 
   // 6) المبيعات التاريخية (آخر 30 يوم)
   const existingSales = await db.sale.count();
