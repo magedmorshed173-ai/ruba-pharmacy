@@ -48,16 +48,20 @@ prismaTx.$transaction = (arg: unknown, opts?: Record<string, unknown>) =>
   });
 
 /**
- * تحسين أداء SQLite (v3.5) — يُطبق فقط عندما تكون القاعدة SQLite فعلاً
- * (تطوير محلي اختياري): WAL + busy_timeout يمنعان "database is locked".
- * مع Neon Postgres تُتجاهل بسلامة (PRAGMA غير مدعوم في PG — تُلتقط صمتاً).
+ * تحسين أداء SQLite (v3.5، صُحِّح في v4.6.1) — يُطبق فقط عندما تكون القاعدة
+ * SQLite فعلاً (تطوير محلي اختياري): WAL + busy_timeout يمنعان "database is locked".
+ * v4.6.1: كان يُرسل PRAGMA إلى Postgres أبداً عند كل استيراد (الالتقاط الصامت
+ * كان يخفي أخطاء صريحة في سجل القاعدة — أثبتها سجل CI: syntax error) —
+ * الآن بوّابة صريحة على DATABASE_URL=file: قبل أي تنفيذ.
  */
 async function enableSqlitePerformanceMode(): Promise<void> {
+  const url = process.env.DATABASE_URL ?? "";
+  if (!url.startsWith("file:")) return; // Postgres/Neon — لا PRAGMA إطلاقاً
   try {
     await db.$executeRawUnsafe("PRAGMA journal_mode=WAL;");
     await db.$executeRawUnsafe("PRAGMA busy_timeout=5000;");
   } catch {
-    /* غير SQLite (Postgres/Neon) — تجاهل صامت */
+    /* SQLite بلا دعم PRAGMA؟ — تجاهل صامت */
   }
 }
 

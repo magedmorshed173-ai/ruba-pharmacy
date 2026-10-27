@@ -4,6 +4,12 @@ import { expect, test } from "@playwright/test";
  * مسار الدخول حتى لوحة التحكم — يتطلب قاعدة حية + مدير مبذور:
  * بيانات الاعتماد من E2E_ADMIN_USER / E2E_ADMIN_PASSWORD —
  * غيابهما (مثلاً معاينة محلية بلا قاعدة) يُتخطى الاختبار تلقائياً بدل أن يفشل.
+ *
+ * v4.6.1 — إصلاح جذري بعد أول تشغيل حقيقي في CI:
+ * المحددات القديمة `input[type="text"]` كانت لا تطابق الحقل إطلاقاً
+ * (CSS attribute selector يطابق الـ attribute لا الخصائص المحسوبة، والحقل
+ * كان بلا type/name صريحين) — أُصلح الحقل في login-view.tsx (type + name)
+ * والمحددات هنا عبر getByLabel المرتبط بـ <Label htmlFor> — أثبت وأصح.
  */
 const user = process.env.E2E_ADMIN_USER;
 const password = process.env.E2E_ADMIN_PASSWORD;
@@ -12,35 +18,27 @@ const hasCreds = Boolean(user && password);
 test.describe("مسار الدخول", () => {
   test("حقل مستخدم غير صحيح يعطي خطأ ولا يدخل", async ({ page }) => {
     await page.goto("/");
-    // شاشة الدخول: اسم مستخدم + كلمة مرور
-    const userInput = page.locator('input[type="text"], input[name="username"]').first();
+    const userInput = page.getByLabel("اسم المستخدم");
     await userInput.waitFor({ timeout: 15_000 });
     await userInput.fill("no-such-user-e2e");
-    await page.locator('input[type="password"]').first().fill("wrong-password-123");
-    await page
-      .locator('button[type="submit"], button:has-text("دخول"), button:has-text("تسجيل الدخول")')
-      .first()
-      .click();
-    // بقاء على شاشة الدخول مع رسالة خطأ (toast أو نص)
-    await expect(page.locator('input[type="password"]').first()).toBeVisible({
-      timeout: 15_000,
-    });
+    await page.getByLabel("كلمة المرور").fill("wrong-password-123");
+    await page.getByRole("button", { name: "دخول", exact: true }).click();
+    // بقاء على شاشة الدخول (رسالة الخطأ toast أو نص) — حقل كلمة المرور ما زال مرئياً
+    await expect(page.getByLabel("كلمة المرور")).toBeVisible({ timeout: 15_000 });
   });
 
   test("دخول المدير المبذور يصل لوحة التحكم ثم يخرج", async ({ page }) => {
-    test.skip(!hasCreds, "E2E_ADMIN_USER/E2E_ADMIN_PASSWORD غير مضبوطة — تخطٍّ مقصود");
+    test.skip(!hasCreds, "E2E_ADMIN_USER/E2E_ADMIN_PASSWORD غير مضبوطة — تخطٍّ مقصود");
     await page.goto("/");
-    await page.locator('input[type="text"], input[name="username"]').first().fill(user!);
-    await page.locator('input[type="password"]').first().fill(password!);
-    await page
-      .locator('button[type="submit"], button:has-text("دخول"), button:has-text("تسجيل الدخول")')
-      .first()
-      .click();
+    await page.getByLabel("اسم المستخدم").fill(user!);
+    await page.getByLabel("كلمة المرور").fill(password!);
+    await page.getByRole("button", { name: "دخول", exact: true }).click();
 
-    // بعد الدخول: غياب حقل كلمة المرور (انتقلنا للوحة)
-    await expect(page.locator('input[type="password"]')).toHaveCount(0, { timeout: 20_000 });
-    // نافذة نقطة البيع أو اللوحة مرتسمة — التطبيق يبدأ من POS بعد الدخول
-    await expect(page.locator("body")).toContainText(/ربي فارمسي|سلة البيع|لوحة/, {
+    // خروج من نموذج الدخول: إما الوصول للتطبيق أو شاشة تفعيل 2FA للمدير
+    // (سلوك v4.5: المدير بلا TOTP يوجَّه للتفعيل عند الدخول) — كلاهما يخفي حقل كلمة المرور
+    await expect(page.getByLabel("كلمة المرور")).toHaveCount(0, { timeout: 20_000 });
+    // واجهة التطبيق (POS/لوحة) أو توجيه التفعيل — كلها داخل غلاف المنصة المرسوم
+    await expect(page.locator("body")).toContainText(/ربي فارمسي|سلة البيع|لوحة|التحقق بخطوتين/, {
       timeout: 20_000,
     });
   });

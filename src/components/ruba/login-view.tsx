@@ -198,6 +198,8 @@ export function LoginView() {
                 <UserIcon className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="username"
+                  type="text"
+                  name="username"
                   className="ps-9 h-11"
                   placeholder="مثال: admin"
                   value={username}
