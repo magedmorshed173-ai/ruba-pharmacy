@@ -4,6 +4,23 @@
 الصيغة مبنية على [Keep a Changelog](https://keepachangelog.com/ar/1.1.0/)
 والإصدارات تتبع [SemVer](https://semver.org/lang/ar/).
 
+## [4.6.5] — 2026-10-28 — «الإطلاق الحي: قاعدة Neon مُدارة من Vercel + نشر الإنتاج الناجح»
+
+### مضاف
+- **ربط مخزن Neon (Vercel-managed) بمشروع ruba-pharmacy عبر API** (`POST /v1/storage/stores/{id}/connections`) — الحقن التلقائي لـ 18 متغير بيئة منها `DATABASE_URL` المجمّعة؛ المتغيرات المحقونة من التكامل لا تُلمس يدوياً أبداً.
+- **`scripts/vercel_store_fetch.py`**: استخراج سلاسل الاتصال من مخزن Vercel Storage بكتابة محلية آمنة (`.secrets/` بلا طباعة) — المجمّعة (`-pooler`) والمباشرة (`DATABASE_URL_UNPOOLED`) مع `sslmode=require`.
+- **`scripts/vercel_poll.py`**: مراقبة نشر الإنتاج حتى `READY/ERROR` مع استخراج نص خطأ البناء من الأحداث عند الفشل.
+- **`postinstall: prisma generate`** في `package.json` — إصلاح جذر فشل البناء على Vercel: عميل Prisma المستعاد من build cache كان أقدم من نموذج `Drug` فيُفشل التحقق النوعي (`Property 'drug' does not exist`)؛ التوليد بعد كل تثبيت يضمن عميلاً طازجاً مطابقاً للمخطط.
+- `WIRE_VARS` في `scripts/vercel_wire.py` لحصر المتغيرات المرفوعة (الافتراضي الثلاثة؛ في v4.6.5 رُفع `DIRECT_URL` + `AUTH_SECRET` فقط حفاظاً على حقن التكامل).
+
+### أُنجز حياً
+- المرحلة 1 (Neon): الترحيلات الثلاثة (`0_init`, `1_zatca_2fa_ratelimit`, `2_insurance_branches`) طُبّقت على `rapid-dawn-57152759` عبر السلسلة المباشرة — التحقق الحي: **28 جدولاً**، كتالوج دواء **46**، سجل وطني **30**، حساب مدير مضمون (نمط `catalog` — إنتاج نظيف بلا بيانات وهمية).
+- المرحلة 2 (Vercel): `DIRECT_URL` و`AUTH_SECRET` رُفعتا مشفّرتين على الثلاثة الأهداف (201)، ونشر الإنتاج أُطلق من `main` عبر `gitSource`.
+
+### القرار
+- `DATABASE_URL` الإنتاجية تبقى متغيراً محقوناً من تكامل Neon Storage حصراً (مصدر واحد للحقيقة — لا نسخ يدوية تتعارض مع دورة حياة التكامل).
+- `AUTH_SECRET` يُولَّد محلياً (64 hex) ويُخزَّن في `.secrets/` المستثناة محلياً فقط — لا commit ولا سجل.
+
 ## [4.6.4] — 2026-10-28 — «إغلاق الحلقة: تهيئة Neon تصل إلى النشر الحي»
 
 ### مضاف

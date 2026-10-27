@@ -19,7 +19,13 @@ PROJECT_ID = os.environ.get("VERCEL_PROJECT_ID", "prj_5p5n9DYCBrOnWpPwKzVB9ASU9A
 PROJECT_NAME = os.environ.get("VERCEL_PROJECT_NAME", "ruba-pharmacy")
 GIT_REPO = os.environ.get("VERCEL_GIT_REPO", "magedmorshed173-ai/ruba-pharmacy")
 GIT_REF = os.environ.get("VERCEL_GIT_REF", "main")
-VARS = ["DATABASE_URL", "DIRECT_URL", "AUTH_SECRET"]
+# v4.6.5 — يمكن حصر المتغيرات عبر WIRE_VARS="DIRECT_URL,AUTH_SECRET"
+# (المتغيرات المحقونة من تكامل Neon Storage — كDATABASE_URL — يجب ألا تُلمس يدوياً)
+VARS = [
+    v.strip()
+    for v in os.environ.get("WIRE_VARS", "DATABASE_URL,DIRECT_URL,AUTH_SECRET").split(",")
+    if v.strip()
+]
 TARGETS = ["production", "preview", "development"]
 
 
@@ -87,14 +93,17 @@ def main() -> None:
         if status not in (200, 201):
             sys.exit(1)
 
-    # 4) إطلاق نشر الإنتاج من main
-    status, dep = api(
-        f"/v13/deployments{tq}",
-        {
-            "name": PROJECT_NAME,
-            "gitSource": {"type": "github", "repo": GIT_REPO, "ref": GIT_REF},
-        },
-    )
+    # 4) إطلاق نشر الإنتاج من main (شكلا gitSource: org+repo ثم owner/repo احتياطاً)
+    org, repo = (GIT_REPO.split("/", 1) + [""])[:2]
+    dep = {}
+    status = 0
+    for gs in (
+        {"type": "github", "org": org, "repo": repo, "ref": GIT_REF},
+        {"type": "github", "repo": GIT_REPO, "ref": GIT_REF},
+    ):
+        status, dep = api(f"/v13/deployments{tq}", {"name": PROJECT_NAME, "gitSource": gs})
+        if status in (200, 201):
+            break
     if status not in (200, 201):
         print(f"::error::فشل إطلاق النشر — HTTP {status}")
         sys.exit(1)
