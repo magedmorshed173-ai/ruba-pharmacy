@@ -10,6 +10,8 @@ import { config } from "dotenv";
 // v4.3 — حارس عزل E2E: DOTENV_KEEP_ENV=1 يعطّل التجاوز (القاعدة المفروضة من الحاضنة تبقى)
 config({ override: process.env.DOTENV_KEEP_ENV !== "1", quiet: true });
 import { INTERACTIONS } from "./clinical-interactions";
+import { INTERACTIONS_V5A } from "./clinical-interactions-v5a";
+import { INTERACTIONS_V5B } from "./clinical-interactions-v5b";
 import bcrypt from "bcryptjs";
 
 const db = new PrismaClient();
@@ -231,7 +233,8 @@ async function main() {
   if (needBatches.length) console.log(`✓ ${needBatches.length} دفعة ابتدائية (LOT)`);
 
   // 4) التداخلات السريرية — upsert كامل حتى تُحدّث السجلات القديمة بالحقول العلمية
-  for (const [a, b, sev, desc, mech, effect, mgmt, evidence, source, onset] of INTERACTIONS) {
+  const ALL_INTERACTIONS = [...INTERACTIONS, ...INTERACTIONS_V5A, ...INTERACTIONS_V5B];
+  for (const [a, b, sev, desc, mech, effect, mgmt, evidence, source, onset] of ALL_INTERACTIONS) {
     await db.drugInteraction.upsert({
       where: { genericA_genericB: { genericA: a, genericB: b } },
       update: {
@@ -258,7 +261,7 @@ async function main() {
       },
     });
   }
-  console.log(`✓ ${INTERACTIONS.length} تداخل دوائي موثق سريرياً`);
+  console.log(`✓ ${ALL_INTERACTIONS.length} تداخل دوائي موثق سريرياً`);
 
   // 4-b) السجل الوطني: الإجراء التنظيمي المعلّق (نمط حالة رانيتيدين/NDMA 2020)
   const ranitidine = meds.find((m) => m.genericName === "ranitidine");

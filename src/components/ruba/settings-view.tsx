@@ -66,6 +66,17 @@ export function SettingsView({
   const [branchForm, setBranchForm] = useState({ name: "", code: "", phone: "", address: "" });
   const [branchSaving, setBranchSaving] = useState(false);
 
+  // ── v5.0 — لوحة بوابة قفل النظام ──
+  interface LockCfg {
+    mode: "admin" | "users";
+    ttlHours: number;
+    epoch: string;
+    source: { mode: "env" | "db"; ttl: "env" | "db"; epoch: "env" | "db" };
+  }
+  const [lockCfg, setLockCfg] = useState<LockCfg | null>(null);
+  const [lockSaving, setLockSaving] = useState(false);
+  const [revoking, setRevoking] = useState(false);
+
   const loadProviders = useCallback(async () => {
     try {
       const r = await api<{ providers: ProviderRow[] }>("/api/insurance/providers");
@@ -89,6 +100,46 @@ export function SettingsView({
     void loadProviders();
     void loadBranches();
   }, [isAdmin, loadProviders, loadBranches]);
+
+  const loadLockCfg = useCallback(async () => {
+    try {
+      const r = await api<LockCfg>("/api/lock/settings");
+      setLockCfg(r);
+    } catch {
+      setLockCfg(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    void loadLockCfg();
+  }, [isAdmin, loadLockCfg]);
+
+  async function saveLock(patch: { mode?: "admin" | "users"; ttlHours?: number }) {
+    setLockSaving(true);
+    try {
+      const r = await api<LockCfg>("/api/lock/settings", { method: "PUT", json: patch });
+      setLockCfg(r);
+      toast.success("حُفظت إعدادات القفل — تُطبّق على مفاتيح الفتح الجديدة");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر الحفظ");
+    } finally {
+      setLockSaving(false);
+    }
+  }
+
+  async function revokeKeys() {
+    setRevoking(true);
+    try {
+      await api("/api/lock/revoke", { method: "POST" });
+      toast.success("سُحبت كل المفاتيح — ستُلتقط الأجهزة المفتوحة خلال دقيقة");
+      await loadLockCfg();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر السحب");
+    } finally {
+      setRevoking(false);
+    }
+  }
 
   async function addProvider() {
     if (!provForm.name.trim()) {
@@ -351,6 +402,91 @@ export function SettingsView({
           </div>
         </div>
       </div>
+
+      {/* v5.0 — لوحة بوابة قفل النظام */}
+      {isAdmin && (
+        <div className="rounded-xl border bg-card p-5 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400">
+              <KeyRound className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="font-bold">بوابة قفل النظام</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                مَن يفتح النظام وبأي مفتاح ولمدة كم — تُطبّق القيم على مفاتيح الفتح الجديدة،
+                والقائمة تكمل صلاحيتها.
+              </p>
+              {lockCfg === null ? (
+                <Loader2 className="mt-3 size-4 animate-spin text-muted-foreground" />
+              ) : (
+                <div className="mt-3 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <Badge variant="outline">
+                      الوضع الحالي: {lockCfg.mode === "admin" ? "مفتاح المدير" : "مفاتيح الموظفين"}
+                    </Badge>
+                    <Badge variant="outline">المدة: {lockCfg.ttlHours} ساعة</Badge>
+                    <Badge variant="outline">epoch: {lockCfg.epoch}</Badge>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border bg-muted/30 p-3">
+                      <p className="mb-2 text-xs font-bold">وضع المفاتيح</p>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant={lockCfg.mode === "admin" ? "default" : "outline"}
+                          disabled={lockSaving || lockCfg.mode === "admin"}
+                          onClick={() => saveLock({ mode: "admin" })}
+                          className="bg-teal-600 hover:bg-teal-700"
+                        >
+                          مفتاح المدير
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={lockCfg.mode === "users" ? "default" : "outline"}
+                          disabled={lockSaving || lockCfg.mode === "users"}
+                          onClick={() => saveLock({ mode: "users" })}
+                        >
+                          مفاتيح الموظفين
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 p-3">
+                      <p className="mb-2 text-xs font-bold">مدة بقاء المفتاح</p>
+                      <select
+                        className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                        value={lockCfg.ttlHours}
+                        disabled={lockSaving}
+                        onChange={(e) => saveLock({ ttlHours: Number(e.target.value) })}
+                      >
+                        {[1, 2, 4, 8, 12, 24, 48, 72, 168].map((h) => (
+                          <option key={h} value={h}>{h} ساعة</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900 dark:bg-rose-950/30">
+                    <p className="text-xs font-bold text-rose-700 dark:text-rose-300">سحب طارئ</p>
+                    <p className="mt-1 text-xs text-rose-600/80 dark:text-rose-400/80">
+                      يميت كل مفاتيح الفتح الصادرة على كل الأجهزة فوراً — تُستخدم عند
+                      فقدان جهاز أو شبهة تسريب.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 border-rose-300 text-rose-700 hover:bg-rose-100 dark:text-rose-300"
+                      disabled={revoking}
+                      onClick={revokeKeys}
+                    >
+                      {revoking ? <Loader2 className="size-4 animate-spin" /> : <ShieldOff className="size-4" />}
+                      سحب كل المفاتيح الآن
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* شركات التأمين والفروع — إدارة (v4.6) */}
       {isAdmin && (

@@ -581,3 +581,29 @@ model PatientInsurancePolicy {
   @@index([patientId, isActive])
   @@index([providerId])
 }
+
+// ── v5.0 — إعدادات النظام الحية — بديل «متحكم به من لوحة الإعدادات» لمتغيرات Vercel ──
+// صف لكل مفتاح (مثل lock.mode / lock.ttl_hours / lock.epoch) — تُقرأ وقت إصدار
+// مفاتيح القفل مع رجوع آمن لقيم البيئة، وكل تعديل يُدقَّق باسم المدير.
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@index([updatedAt])
+}
+
+// ── v5.0 — لقطات التقارير المجدولة (Vercel Cron يومي) ──
+// لقطة واحدة لكل يوم — تُحسب مرة وتُخبأ للعرض والطباعة الفورية (PDF عبر المتصفح).
+model ReportSnapshot {
+  id          String   @id @default(cuid())
+  kind        String   @default("daily") // daily | weekly
+  periodStart DateTime // بداية اليوم المغطى (00:00 UTC)
+  periodEnd   DateTime // نهايته الحصرية
+  data        Json     // مؤشرات اليوم: مبيعات، أعلى الأصناف، نواقص، صلاحيات…
+  createdAt   DateTime @default(now())
+
+  @@unique([kind, periodStart])
+  @@index([createdAt])
+}

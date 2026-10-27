@@ -45,7 +45,12 @@ async function isUnlocked(request: NextRequest): Promise<boolean> {
       // الصلاحية (exp) تُفحص آلياً — الفارق الزمني المسموح دقيقة واحدة
       clockTolerance: 60,
     });
-    return payload.purpose === LOCK_PURPOSE && payload.epoch === lockEpoch();
+    return (
+      payload.purpose === LOCK_PURPOSE &&
+      // v5.0 — مقارنة عددية (>=): رفع LOCK_EPOCH البيئي يسحب كل المفاتيح الأدنى
+      // فوراً على كل الأجهزة، والمفاتيح الصادرة بإعدادات أعلى من اللوحة تبقى صالحة
+      Number(payload.epoch) >= Number(lockEpoch())
+    );
   } catch {
     return false;
   }
@@ -78,8 +83,15 @@ export async function middleware(request: NextRequest) {
   const { csp, nonce } = buildCsp(isDev);
 
   // ── بوابة القفل ──
+  // v5.0: مسار كرون التقارير (POST فقط) يُعفى من البوابة — الطلب نفسه
+  // يُحصَّن داخل النقطة بـ CRON_SECRET أو جلسة مدير أو مقيّد معدل صارم،
+  // بينما GET يبقى خلف البوابة (يعرض بيانات تشغيلية).
+  const isCronPost =
+    request.nextUrl.pathname === "/api/reports/snapshot" &&
+    request.method === "POST";
   if (
     lockEnabled() &&
+    !isCronPost &&
     !isLockPublicPath(request.nextUrl.pathname) &&
     !(await isUnlocked(request))
   ) {

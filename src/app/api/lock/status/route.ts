@@ -4,28 +4,21 @@ import {
   LOCK_COOKIE,
   LOCK_PURPOSE,
   DEV_FALLBACK_SECRET,
-  lockEpoch,
-  lockMode,
-  lockWarnBeforeSec,
 } from "@/lib/lock-shared";
-import { lockTtlSec } from "@/lib/system-lock";
+import { getLockConfig } from "@/lib/lock-config";
 
 /**
- * GET /api/lock/status — v4.8 حالة مفتاح النظام على هذا الجهاز
+ * GET /api/lock/status — v4.8 حالة مفتاح النظام على هذا الجهاز (محدَّث v5.0)
  *
  * مسار عام (ضمن /api/lock) لكنه لا يكشف شيئاً عن بيانات النظام:
- *  - مقفل؟  ⇒ { locked: true } فقط — لا شيء آخر.
- *  - مفتوح؟ ⇒ موعد الانتهاء (يجيزه صاحب الجهاز نفسه) + متى يبدأ التنبيه
- *             + وضع المفاتيح (admin/users) لتكيّف الشاشات.
- *
- * الاستخدام: مراقب انتهاء الصلاحية في الواجهة (LockExpiryWatcher) يحاورها
- * كل دقيقة — يحذّر قبل الانتهاء بتمديد داخلي بلا خسارة حالة الصفحة،
- * ويعيد التوجيه إلى /lock فور الانتهاء أو السحب (LOCK_EPOCH).
+ *  - مقفل؟  ⇒ { locked: true } فقط.
+ *  - مفتوح؟ ⇒ موعد الانتهاء + متى يبدأ التنبيه + وضع المفاتيح الفعلي
+ *             (من الإعدادات الحية v5.0 — قاعدة أولاً مع رجوع للبيئة).
  *
  * ملاحظات أمنية:
- *  - التحقق توقيعي حصراً (jose) — بلا قاعدة بيانات، زمن ثابت تقريباً.
- *  - Cache-Control: no-store — الحالة لا تُخبَّز في أي طبقة (متوافق مع
- *    سياسة الـ SW: مسارات /api لا تُخبَّز أصلاً).
+ *  - مقارنة epoch عددية (>=) متسقة مع الـ middleware — السحب من اللوحة
+ *    أو البيئة يميت المفاتيح الأدنى هنا أيضاً فيلتقطها المراقب خلال دقيقة.
+ *  - Cache-Control: no-store.
  */
 export const dynamic = "force-dynamic";
 
@@ -34,6 +27,7 @@ const lockSecret = new TextEncoder().encode(
 );
 
 export async function GET(request: NextRequest) {
+  const cfg = await getLockConfig();
   const token = request.cookies.get(LOCK_COOKIE)?.value;
   let locked = true;
   let expiresAt: string | null = null;
@@ -46,7 +40,7 @@ export async function GET(request: NextRequest) {
       });
       if (
         payload.purpose === LOCK_PURPOSE &&
-        payload.epoch === lockEpoch() &&
+        Number(payload.epoch) >= Number(cfg.epoch) &&
         typeof payload.exp === "number"
       ) {
         locked = false;
@@ -61,8 +55,8 @@ export async function GET(request: NextRequest) {
     {
       locked,
       expiresAt,
-      warnBeforeSec: lockWarnBeforeSec(lockTtlSec()),
-      mode: lockMode(),
+      warnBeforeSec: Math.max(60, Math.min(10 * 60, Math.floor((cfg.ttlHours * 3600) / 6))),
+      mode: cfg.mode,
     },
     { headers: { "Cache-Control": "no-store" } }
   );

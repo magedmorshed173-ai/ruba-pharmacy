@@ -130,6 +130,23 @@ export function ReportsView({ user }: { user: AuthUser }) {
   const [claimDays, setClaimDays] = useState(30);
   const [claimStatus, setClaimStatus] = useState("");
   const [claimLoading, setClaimLoading] = useState(false);
+  // ── v5.0 — التقارير المجدولة ──
+  const isAdminUser = user.role === "admin";
+  interface SnapRow {
+    id: string;
+    kind: string;
+    periodStart: string;
+    periodEnd: string;
+    data: {
+      salesCount?: number;
+      netRevenueHalalas?: number;
+      lowStockCount?: number;
+      expiringBatches30?: number;
+    };
+    createdAt: string;
+  }
+  const [snapshots, setSnapshots] = useState<SnapRow[] | null>(null);
+  const [snapRunning, setSnapRunning] = useState(false);
 
   const loadSales = useCallback(async (bid: string) => {
     try {
@@ -177,6 +194,29 @@ export function ReportsView({ user }: { user: AuthUser }) {
       .then((r) => setRestock(r.rows))
       .catch(() => setRestock([]));
   }, [loadSales]);
+
+  // v5.0 — لقطات التقارير المجدولة
+  const loadSnapshots = useCallback(async () => {
+    try {
+      const r = await api<{ snapshots: SnapRow[] }>("/api/reports/snapshot");
+      setSnapshots(r.snapshots);
+    } catch {
+      setSnapshots([]);
+    }
+  }, []);
+
+  async function runSnapshotNow() {
+    setSnapRunning(true);
+    try {
+      await api("/api/reports/snapshot", { method: "POST" });
+      toast.success("وُلّدت لقطة أمس — جاهزة للعرض والطباعة");
+      await loadSnapshots();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "تعذر التوليد");
+    } finally {
+      setSnapRunning(false);
+    }
+  }
 
   async function exportCsv() {
     setExporting(true);
@@ -233,6 +273,7 @@ export function ReportsView({ user }: { user: AuthUser }) {
       <Tabs defaultValue="sales" dir="rtl" onValueChange={(v) => {
         if (v === "profit" && profit === null) loadProfit(profitDays);
         if (v === "claims" && claims === null) loadClaims(claimDays, claimStatus);
+        if (v === "scheduled" && snapshots === null) loadSnapshots();
       }}>
         <TabsList className="h-10">
           <TabsTrigger value="sales" className="px-4">
@@ -250,6 +291,9 @@ export function ReportsView({ user }: { user: AuthUser }) {
           )}
           <TabsTrigger value="restock" className="px-4">
             <PackagePlus className="size-4" /> إعادة الطلب الذكية
+          </TabsTrigger>
+          <TabsTrigger value="scheduled" className="px-4">
+            <CalendarDays className="size-4" /> مجدولة v5.0
           </TabsTrigger>
         </TabsList>
 
@@ -778,6 +822,84 @@ export function ReportsView({ user }: { user: AuthUser }) {
                         ) : (
                           <span className="text-xs text-muted-foreground">كافٍ ✓</span>
                         )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </TabsContent>
+        {/* v5.0 — تبويب التقارير المجدولة */}
+        <TabsContent value="scheduled" className="mt-4 space-y-4">
+          <div className="rounded-xl border bg-card p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-bold">
+                  <CalendarDays className="size-4 text-teal-600" /> لقطات يومية آلية
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  منتصف كل ليلة (00:00 بتوقيت السعودية) يولّد النظام لقطة يوم كامل —
+                  جاهزة للعرض والطباعة PDF بضغطة واحدة.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                {isAdminUser && (
+                  <Button size="sm" onClick={runSnapshotNow} disabled={snapRunning} className="bg-teal-600 hover:bg-teal-700">
+                    {snapRunning ? <Loader2 className="size-4 animate-spin" /> : <TrendingUp className="size-4" />}
+                    توليد لقطة أمس الآن
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={loadSnapshots}>
+                  <Download className="size-4" /> تحديث
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border bg-card">
+            {snapshots === null ? (
+              <div className="p-6 text-center text-sm text-muted-foreground">جارٍ الجلب…</div>
+            ) : snapshots.length === 0 ? (
+              <div className="p-6 text-center text-sm text-muted-foreground">
+                لا لقطات بعد — انتظر التوليد الآلي منتصف الليل أو اضغط «توليد لقطة أمس الآن».
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-start">اليوم</TableHead>
+                    <TableHead className="text-start">الفواتير</TableHead>
+                    <TableHead className="text-start">صافي (ر.س)</TableHead>
+                    <TableHead className="text-start">نواقص</TableHead>
+                    <TableHead className="text-start">صلاحية ≤30ي</TableHead>
+                    <TableHead className="text-start">عرض/طباعة</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {snapshots.map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell className="text-start">
+                        {new Date(s.periodStart).toLocaleDateString("ar", {
+                          timeZone: "UTC",
+                          dateStyle: "medium",
+                        })}
+                      </TableCell>
+                      <TableCell className="text-start">{s.data?.salesCount ?? 0}</TableCell>
+                      <TableCell className="text-start">
+                        {fmtMoney((s.data?.netRevenueHalalas ?? 0) / 100)}
+                      </TableCell>
+                      <TableCell className="text-start">{s.data?.lowStockCount ?? 0}</TableCell>
+                      <TableCell className="text-start">{s.data?.expiringBatches30 ?? 0}</TableCell>
+                      <TableCell className="text-start">
+                        <a
+                          className="text-xs font-bold text-teal-600 hover:underline"
+                          href={`/reports/print/${s.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          فتح PDF
+                        </a>
                       </TableCell>
                     </TableRow>
                   ))}

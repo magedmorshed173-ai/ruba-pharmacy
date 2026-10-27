@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import {
   allergyConflicts,
   duplicateTherapyGroups,
+  normalizePair,
   parseSeverity,
   SEVERITY_RANK,
   type AllergyHit,
@@ -28,6 +29,18 @@ import {
   hasRegistryBlock,
   type RegistryAlert,
 } from "@/lib/registry";
+import {
+  predictMechanistic,
+  type MechanisticPrediction,
+} from "@/lib/cyp450";
+import {
+  scanSyndromePanels,
+  type SyndromePanelHit,
+} from "@/lib/syndrome-panels";
+import {
+  beersAlerts,
+  type BeersAlert,
+} from "@/lib/renal";
 
 export interface ClinicalHit {
   genericA: string;
@@ -55,6 +68,12 @@ export interface ClinicalReview {
   pregnancyAlerts: GateAlert[];
   /** بوابة العمر (v4.3) — العمر دون الحد الأدنى المعتمد حاجب */
   ageAlerts: GateAlert[];
+  /** v5.0 — تنبؤات CYP450 الميكانيكية (نمط Medi-Span) — ثنائيات غير منقّحة */
+  mechanisticPredictions: MechanisticPrediction[];
+  /** v5.0 — لوحات المخاطر التراكمية (نمط Epocrates) — QT/سيروتونين/نزيف/… */
+  syndromePanels: SyndromePanelHit[];
+  /** v5.0 — معايير Beers لكبار السن (65+) */
+  beersAlerts: BeersAlert[];
   highestSeverity: InteractionSeverity | null;
   /** ممنوع سريرياً أو تعارض حساسية — يستلزم تجاوزاً مسؤولاً للإتمام */
   blocking: boolean;
@@ -241,6 +260,27 @@ export async function reviewCartClinical(
     null
   );
 
+  // ── v5.0 — الطبقة التنبؤية الميكانيكية (CYP450) ──
+  // التنبؤ فقط للثنائيات التي لا تغطيها القاعدة المنقّحة — والمنقّح مرجعه الأعلى.
+  const curatedPairs = new Set(
+    interactions.map((h) => normalizePair(h.genericA, h.genericB).join("|"))
+  );
+  const allGenerics = [...cartGenerics, ...patientGenerics];
+  const mechanisticPredictions: MechanisticPrediction[] = [];
+  for (let i = 0; i < allGenerics.length; i++) {
+    for (let j = i + 1; j < allGenerics.length; j++) {
+      const [ga, gb] = normalizePair(allGenerics[i], allGenerics[j]);
+      if (curatedPairs.has(`${ga}|${gb}`)) continue;
+      for (const p of predictMechanistic(ga, gb)) {
+        mechanisticPredictions.push(p);
+      }
+    }
+  }
+
+  // ── v5.0 — لوحات المخاطر التراكمية + معايير Beers ──
+  const syndromePanels = scanSyndromePanels(allGenerics);
+  const beers = beersAlerts(allGenerics, patientAge);
+
   const gateBlocking =
     pregnancyAlerts.some((a) => a.severity === "blocking") ||
     ageAlerts.some((a) => a.severity === "blocking");
@@ -253,6 +293,9 @@ export async function reviewCartClinical(
     registryBlocking: hasRegistryBlock(allRegistryAlerts),
     pregnancyAlerts,
     ageAlerts,
+    mechanisticPredictions,
+    syndromePanels,
+    beersAlerts: beers,
     highestSeverity,
     blocking:
       highestSeverity === "contraindicated" ||

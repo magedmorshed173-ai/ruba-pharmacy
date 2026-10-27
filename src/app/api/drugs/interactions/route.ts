@@ -11,6 +11,8 @@ import {
   duplicateTherapyGroups,
   type InteractionSeverity,
 } from "@/lib/clinical";
+import { predictMechanistic } from "@/lib/cyp450";
+import { scanSyndromePanels } from "@/lib/syndrome-panels";
 
 /**
  * POST /api/drugs/interactions — فاحص التفاعلات الدوائية للعميل (v4.0) — عام بلا جلسة
@@ -93,6 +95,23 @@ export async function POST(request: NextRequest) {
       drugs.map((d) => ({ id: d.id, name: d.tradeName, atcClass: d.atcClass }))
     );
 
+    // v5.0 — طبقة التنبؤ الميكانيكي (CYP450): للثنائيات غير المنقّحة فقط،
+    // والمنقّح دائماً مرجعه الأعلى — والتنبؤ معلّم بنظري/مرجّح لا موثق.
+    const curatedSet = new Set(
+      hits.map((h) => normalizePair(String(h.genericA), String(h.genericB)).join("|"))
+    );
+    const mechanisticPredictions: unknown[] = [];
+    for (let i = 0; i < generics.length; i++) {
+      for (let j = i + 1; j < generics.length; j++) {
+        const [x, y] = normalizePair(generics[i], generics[j]);
+        if (curatedSet.has(`${x}|${y}`)) continue;
+        mechanisticPredictions.push(...predictMechanistic(x, y));
+      }
+    }
+
+    // v5.0 — لوحات المخاطر التراكمية على المختارات كاملة
+    const syndromePanels = scanSyndromePanels(generics);
+
     const bySeverity = { contraindicated: 0, major: 0, moderate: 0, minor: 0 };
     for (const h of hits)
       bySeverity[h.severity as keyof typeof bySeverity]++;
@@ -111,6 +130,8 @@ export async function POST(request: NextRequest) {
       checked: drugs.length,
       results: hits,
       duplicates,
+      mechanisticPredictions,
+      syndromePanels,
       summary: {
         pairs: hits.length,
         bySeverity,

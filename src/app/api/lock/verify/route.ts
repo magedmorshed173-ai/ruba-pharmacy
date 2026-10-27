@@ -3,12 +3,11 @@ import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { fail, ok } from "@/lib/api-guard";
 import { clientIp } from "@/lib/auth";
-import { lockMode } from "@/lib/lock-shared";
+import { getLockConfig } from "@/lib/lock-config";
 import {
   lockRateLimiter,
   signLockToken,
   LOCK_COOKIE,
-  lockTtlSec,
 } from "@/lib/system-lock";
 
 /**
@@ -40,7 +39,9 @@ export async function POST(request: NextRequest) {
     const password = String(
       (body as { password?: unknown } | null)?.password ?? ""
     );
-    const mode = lockMode();
+    // v5.0 — الوضع والمدة من الإعدادات الحية (قاعدة أولاً مع رجوع للبيئة)
+    const cfg = await getLockConfig();
+    const mode = cfg.mode;
     const username = String(
       (body as { username?: unknown } | null)?.username ?? ""
     )
@@ -110,9 +111,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // نجاح ⇒ تصفير العدّاد وإصدار مفتاح الفتح
+    // نجاح ⇒ تصفير العدّاد وإصدار مفتاح الفتح بالمدة والـ epoch الفعليين
     await lockRateLimiter.reset(`lock:${ip}`);
-    const token = await signLockToken(matched.password);
+    const ttlSec = Math.round(cfg.ttlHours * 3600);
+    const token = await signLockToken(matched.password, {
+      ttlSec,
+      epoch: cfg.epoch,
+    });
 
     const secureCookie =
       process.env.COOKIE_SECURE === "true" ||
@@ -122,7 +127,7 @@ export async function POST(request: NextRequest) {
       httpOnly: true,
       sameSite: "lax",
       secure: secureCookie,
-      maxAge: lockTtlSec(),
+      maxAge: ttlSec,
       path: "/",
     });
     return res;

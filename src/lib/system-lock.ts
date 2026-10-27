@@ -34,17 +34,21 @@ export function lockKeyFingerprint(passwordHash: string): string {
   return createHash("sha256").update(passwordHash).digest("hex").slice(0, 16);
 }
 
-/** إصدار توكن فتح موقّع (HS256) بصلاحية محدودة */
-export async function signLockToken(passwordHash: string): Promise<string> {
+/** إصدار توكن فتح موقّع (HS256) بصلاحية محدودة — v5.0 يقبل تجاوز TTL/epoch من إعدادات القاعدة */
+export async function signLockToken(
+  passwordHash: string,
+  opts?: { ttlSec?: number; epoch?: string }
+): Promise<string> {
+  const ttlSec = opts?.ttlSec ?? lockTtlSec();
   return new SignJWT({
     purpose: LOCK_PURPOSE,
-    epoch: lockEpoch(),
+    epoch: opts?.epoch ?? lockEpoch(),
     ph: lockKeyFingerprint(passwordHash),
   })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setJti(randomUUID())
-    .setExpirationTime(`${lockTtlSec()}s`)
+    .setExpirationTime(`${ttlSec}s`)
     .sign(lockSecret());
 }
 
@@ -53,3 +57,29 @@ export async function signLockToken(passwordHash: string): Promise<string> {
  * لكل IP. القوة الغاشمة على بوابة المدير تُصدّ هنا قبل الوصول لـ bcrypt.
  */
 export const lockRateLimiter = createDbRateLimiter(5, 15 * 60);
+
+/**
+ * v5.0 — تدقيق عمليات لوحة القفل (حفظ إعدادات/سحب مفاتيح) في LoginAudit
+ * باسم واضح يظهر في شاشة التدقيق — لا يعطل العملية أبداً.
+ */
+export async function recordLockAdminAudit(
+  auditName: string,
+  userId: string,
+  username: string,
+  ip: string | null
+): Promise<void> {
+  try {
+    const { db } = await import("./db");
+    await db.loginAudit.create({
+      data: {
+        username: `${auditName}:${username.slice(0, 40)}`,
+        userId,
+        success: true,
+        ip,
+        userAgent: null,
+      },
+    });
+  } catch {
+    /* التدقيق لا يعطل العملية */
+  }
+}
