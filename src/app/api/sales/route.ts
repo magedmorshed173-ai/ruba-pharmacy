@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { fail, ok, requireAuth } from "@/lib/api-guard";
 import { toInt } from "@/lib/money";
+import { zatcaSellerFromEnv } from "@/lib/zatca";
 import {
   createSale,
   parseSaleItems,
@@ -92,6 +93,10 @@ export async function POST(request: NextRequest) {
         customerPhone: String(body.customerPhone ?? "").trim() || null,
         paymentMethod,
         userId: user.id,
+        // v4.5 — فاتورة ZATCA تلقائياً متى صار الرقم الضريبي مضبوطاً في البيئة
+        zatca: zatcaSellerFromEnv()
+          ? { seller: zatcaSellerFromEnv()! }
+          : undefined,
       });
 
       const full = await db.sale.findUnique({

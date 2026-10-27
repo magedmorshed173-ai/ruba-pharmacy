@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { QRCodeSVG } from "qrcode.react"; // v4.5 — رمز الفاتورة الضريبية ZATCA
 import {
   Dialog,
   DialogContent,
@@ -77,6 +78,12 @@ interface SaleFull {
   discount: number;
   netAmount: number;
   paymentMethod: string;
+  // ── v4.5 — ZATCA ──
+  vatRate: number;
+  vatTotal: number;
+  netOfVat: number;
+  invoiceNumber: string | null;
+  zatcaQr: string | null;
   items: SaleFullItem[];
   user?: { username: string; fullName: string };
 }
@@ -785,6 +792,11 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
               {result.sale && (
                 <div className="rounded-lg border-t border-dashed pt-3 text-xs">
                   <p className="mb-1 text-center text-sm font-extrabold">ربي فارمسي</p>
+                  {result.sale.invoiceNumber && (
+                    <p className="num mb-1 text-center font-bold text-teal-700 dark:text-teal-400" dir="ltr">
+                      {result.sale.invoiceNumber}
+                    </p>
+                  )}
                   <p className="mb-2 text-center text-muted-foreground">
                     {new Date(result.sale.saleDate).toLocaleString("ar-SA")} — البائع: {result.sale.user?.fullName ?? "—"}
                   </p>
@@ -810,11 +822,25 @@ export function PosView({ user, onDone }: { user: AuthUser; onDone?: () => void 
                         <span className="num">−{fmtMoney(result.sale.discount)} ر.س</span>
                       </div>
                     )}
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>الصافي قبل الضريبة</span>
+                      <span className="num">{fmtMoney(result.sale.netOfVat)} ر.س</span>
+                    </div>
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>ضريبة القيمة المضافة ({result.sale.vatRate}%) — ضمن الإجمالي</span>
+                      <span className="num">{fmtMoney(result.sale.vatTotal)} ر.س</span>
+                    </div>
                     <div className="flex justify-between text-base font-extrabold">
-                      <span>الصافي ({result.sale.paymentMethod === "cash" ? "نقدي" : result.sale.paymentMethod === "card" ? "شبكة" : "تأمين"})</span>
+                      <span>الإجمالي المدفوع ({result.sale.paymentMethod === "cash" ? "نقدي" : result.sale.paymentMethod === "card" ? "شبكة" : "تأمين"})</span>
                       <span className="num">{fmtMoney(result.sale.netAmount)} ر.س</span>
                     </div>
                   </div>
+                  {result.sale.zatcaQr && (
+                    <div className="mt-3 flex flex-col items-center gap-1">
+                      <QRCodeSVG value={result.sale.zatcaQr} size={96} level="M" />
+                      <p className="text-[10px] text-muted-foreground">الفاتورة الضريبية المبسطة — ZATCA</p>
+                    </div>
+                  )}
                   <p className="mt-2 text-center text-[10px] text-muted-foreground">شكراً لثقتكم — نتمنى لكم دوام الصحة والعافية</p>
                 </div>
               )}

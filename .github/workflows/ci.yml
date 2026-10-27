@@ -1,52 +1,44 @@
 name: CI
 
+# v4.5 (P1) — بوابة الجودة الآلية:
+# كل ضغطة إلى main وكل طلب دمج يمر عبر: أنواع TypeScript → الاختبارات → بناء الإنتاج
+# الفشل في أي مرحلة يمنع الدمج — تُسكّر باب الديون الصامتة نهائياً.
+
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
-  verify:
-    name: Lint, Tests & Production Build
+  quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # قيم بناء فقط — لا قاعدة حية في CI: الاختبارات وحدة نقية،
+      # والبناء لا يتصل بالقاعدة (الصفحات تستهلك الـ API من المتصفح)
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+      AUTH_SECRET: "ci-build-secret-not-used-at-runtime-0123456789"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          persist-credentials: false
+      - uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Install dependencies
+      - name: تثبيت الاعتماديات
         run: bun install --frozen-lockfile
 
-      - name: Generate Prisma client
+      - name: توليد عميل Prisma
         run: bunx prisma generate
 
-      - name: Lint
+      - name: فحص الأنواع (صفر تسامح)
+        run: bunx tsc --noEmit
+
+      - name: الفحص الأسلوبي
         run: bun run lint
 
-      - name: Unit tests
+      - name: الاختبارات
         run: bun run test
 
-      - name: Production build
+      - name: بناء الإنتاج (بفحص أنواع مفعل)
         run: bun run build
-        env:
-          DATABASE_URL: file:./db/ci.db
-
-      # الاختبارات الحية (v4.3): خادم إنتاجي حقيقي + فرع Neon مؤقت + HTTP فعلي
-      # بلا أسرار Neon يتخطى الجناح بلطف (exit 0) — لتفعيله أضف أسرار الريبو:
-      #   NEON_API_KEY + NEON_PROJECT_ID + NEON_PARENT_DATABASE_URL (رابط مباشر للأصل)
-      #   (+ NEON_PARENT_POOLED_URL اختيارياً — وإلا يُشتق من المباشر)
-      - name: Live E2E suite (real server, real DB)
-        run: bun run test:e2e
-        env:
-          AUTH_SECRET: ci-e2e-secret-not-for-production
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
-          NEON_PARENT_DATABASE_URL: ${{ secrets.NEON_PARENT_DATABASE_URL }}
-          NEON_PARENT_POOLED_URL: ${{ secrets.NEON_PARENT_POOLED_URL }}

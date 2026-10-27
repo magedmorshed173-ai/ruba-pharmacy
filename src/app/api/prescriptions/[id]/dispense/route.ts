@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { fail, ok, requireRole } from "@/lib/api-guard";
 import { createSale, RegistryBlockError } from "@/lib/sale-engine";
+import { zatcaSellerFromEnv } from "@/lib/zatca";
 
 /**
  * POST /api/prescriptions/[id]/dispense — صرف وصفة محققة (صيدلي فما فوق)
@@ -53,6 +54,8 @@ export async function POST(
         userId: user.id,
         // حجوزات هذه الوصفة لا تُحسب ضدها — وحداتها موعودة لها أصلاً
         excludeReservationFor: id,
+        // v4.5 — فاتورة ZATCA للوصفات المصروفة أيضاً
+        zatca: zatcaSellerFromEnv() ? { seller: zatcaSellerFromEnv()! } : undefined,
         withinTx: async (tx, saleId) => {
           // حارس سباق: التحديث فقط إذا كانت الوصفة ما زالت verified —
           // إن سبقنا صرفٌ موازٍ فإن count=0 والمعاملة كلها تتراجع

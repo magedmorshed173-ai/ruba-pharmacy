@@ -1,4 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
+import { NextRequest, NextResponse } from "next/server";
 import { createHash, randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 
@@ -150,6 +151,72 @@ export async function revokeSessionByToken(token: string): Promise<void> {
   } catch {
     /* الخروج لا يفشل بسبب القاعدة */
   }
+}
+
+// ── v4.5 — تحدي 2FA: توكن قصير الأجل بغرض محدد، ليس جلسة ──
+// يُصدر بعد نجاح كلمة المرور حين TOTP مفعلة، ولا يصدر جلسة إلا مع كود صحيح.
+const CHALLENGE_TTL_SEC = 5 * 60;
+
+export async function sign2faChallenge(userId: string): Promise<string> {
+  return new SignJWT({ purpose: "2fa" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(userId)
+    .setIssuedAt()
+    .setJti(randomUUID())
+    .setExpirationTime(`${CHALLENGE_TTL_SEC}s`)
+    .sign(SECRET);
+}
+
+/** تحقق التحدي — يعيد معرف المستخدم أو null (بصمة جهاز غير مطلوبة هنا) */
+export async function verify2faChallenge(
+  token: string
+): Promise<string | null> {
+  try {
+    const { payload } = await jwtVerify(token, SECRET);
+    if (payload.purpose !== "2fa" || !payload.sub) return null;
+    return payload.sub;
+  } catch {
+    return null;
+  }
+}
+
+// ── v4.5 — إصدار استجابة الدخول الناجحة (جلسة + كوكي) — مشتركة بين
+// مسارَي الدخول (كلمة مرور فقط / كلمة مرور + TOTP) حتى لا يتفرق منطقهما ──
+
+export function clientIp(headers: Headers): string {
+  return (
+    headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    headers.get("x-real-ip") ||
+    "local"
+  );
+}
+
+export async function issueLoginResponse(
+  user: SessionUser,
+  request: NextRequest,
+  extra?: Record<string, unknown>
+): Promise<NextResponse> {
+  const token = await signSession(user);
+  const ip = clientIp(request.headers);
+  await createSession({
+    token,
+    userId: user.id,
+    deviceHash: hashDevice(request.headers.get("user-agent")),
+    ip,
+    userAgent: request.headers.get("user-agent"),
+  });
+  const res = NextResponse.json({ user, ...(extra ?? {}) });
+  const secureCookie =
+    process.env.COOKIE_SECURE === "true" ||
+    (process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE !== "false");
+  res.cookies.set(COOKIE_NAME, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: secureCookie,
+    maxAge: 60 * 60 * 24 * 7,
+    path: "/",
+  });
+  return res;
 }
 
 /**

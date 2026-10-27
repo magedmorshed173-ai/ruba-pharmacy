@@ -2,14 +2,14 @@ import { NextRequest } from "next/server";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import {
-  COOKIE_NAME,
-  signSession,
-  createSession,
-  hashDevice,
+  clientIp,
+  issueLoginResponse,
+  sign2faChallenge,
   Role,
 } from "@/lib/auth";
 import { fail, ok } from "@/lib/api-guard";
 import { loginLimiter } from "@/lib/rate-limit";
+import { loginRateLimiter } from "@/lib/rate-limit-db";
 
 /**
  * POST /api/auth/login
@@ -19,7 +19,12 @@ import { loginLimiter } from "@/lib/rate-limit";
  *  - رسائل خطأ عامة (لا تكشف أي الحقلين خاطئ)
  * v3.9 — جلسات قابلة للسحب:
  *  - كل دخول يسجل صفاً في Session ببصمة الجهاز وIP — التوكن بلا صف لا يُعترف به
- *  - الخروج أو تغيير كلمة المرور أو إيقاف الحساب يسحب الجلسات فوراً
+ * v4.5 — التحقق بخطوتين:
+ *  - حساب TOTP مفعّل ⇒ الدخول خطوتان: كلمة المرور تعيد challenge توكن
+ *    قصير الأجل (5 دقائق، ليس جلسة) ثم الكود يُرسل إلى /api/auth/login/verify
+ *  - المدير بلا TOTP يعود له mustEnroll2fa ليتخذ الواجهة التوجيه المناسب
+ *  - v4.5.1: المقيّد صار دائماً في القاعدة (RateLimit) — لا يُصفَّر بإعادة
+ *    التشغيل ولا يتناثر بين نسخ الخادم، مع تراجع آمن للذاكرة عند تعذر القاعدة
  */
 export async function POST(request: NextRequest) {
   try {
@@ -29,12 +34,9 @@ export async function POST(request: NextRequest) {
     if (!username || !password)
       return fail("اسم المستخدم وكلمة المرور مطلوبان");
 
-    // ── حماية القوة الغاشمة ──
-    const ip =
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      request.headers.get("x-real-ip") ||
-      "local";
-    const limit = loginLimiter.hit(`${username}:${ip}`);
+    // ── حماية القوة الغاشمة (دائمة في القاعدة) ──
+    const ip = clientIp(request.headers);
+    const limit = await loginRateLimiter.hit(`${username}:${ip}`);
     if (!limit.allowed) {
       return fail(
         `محاولات كثيرة — أعد المحاولة بعد ${Math.ceil(limit.retryAfterSec / 60)} دقيقة`,
@@ -55,8 +57,8 @@ export async function POST(request: NextRequest) {
       return fail("بيانات الدخول غير صحيحة", 401);
     }
 
-    // نجاح الدخول → تصفير عدّاد المحاولات
-    loginLimiter.reset(`${username}:${ip}`);
+    // نجاح كلمة المرور → تصفير عدّاد المحاولات
+    await loginRateLimiter.reset(`${username}:${ip}`);
     await recordLoginAudit(username, true, ip, request, user.id);
 
     const session = {
@@ -65,33 +67,19 @@ export async function POST(request: NextRequest) {
       fullName: user.fullName,
       role: user.role as Role,
     };
-    const token = await signSession(session);
 
-    // تسجيل الجلسة في القاعدة — بلا صف، التوكن ميت (قابل للسحب لاحقاً)
-    try {
-      await createSession({
-        token,
-        userId: user.id,
-        deviceHash: hashDevice(request.headers.get("user-agent")),
-        ip,
-        userAgent: request.headers.get("user-agent"),
-      });
-    } catch {
-      return fail("تعذر بدء الجلسة — أعد المحاولة", 500);
+    // ── بوابة التحقق بخطوتين ──
+    if (user.totpEnabled && user.totpSecret) {
+      const challenge = await sign2faChallenge(user.id);
+      return ok({ twoFactorRequired: true, challenge });
     }
 
-    const res = ok({ user: session });
-    const secureCookie =
-      process.env.COOKIE_SECURE === "true" ||
-      (process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE !== "false");
-    res.cookies.set(COOKIE_NAME, token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: secureCookie,
-      maxAge: 60 * 60 * 24 * 7,
-      path: "/",
-    });
-    return res;
+    // المدير بلا TOTP: جلسة كاملة + توجيه لتفعيلها (ليس حجباً)
+    return issueLoginResponse(
+      session,
+      request,
+      user.role === "admin" ? { mustEnroll2fa: true } : undefined
+    );
   } catch {
     return fail("تعذر تسجيل الدخول", 500);
   }

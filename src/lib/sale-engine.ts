@@ -23,6 +23,14 @@ import {
   assertAvailable,
   mapActiveReservations,
 } from "@/lib/reservations";
+import {
+  buildSimplifiedQr,
+  formatInvoiceNumber,
+  netOfVat,
+  vatFromInclusive,
+  ZATCA_VAT_RATE,
+  type ZatcaSeller,
+} from "@/lib/zatca";
 
 /** خطأ حجب تنظيمي — تُحوّله المسارات إلى 409 مع علم registryBlock */
 export class RegistryBlockError extends Error {
@@ -59,6 +67,11 @@ export interface CreateSaleParams {
    * (مثال: تحويل حالة الوصفة إلى dispensed مع ربط saleId)
    */
   withinTx?: (tx: Prisma.TransactionClient, saleId: string) => Promise<void>;
+  /**
+   * v4.5 — هوية البائع الضريبية (ZATCA). تُحسب حقول الضريبة دائماً حتى بلا هوية؛
+   * أما رقم الفاتورة التسلسلي وQR فيُولَّدان فقط عند توفرها (env: ZATCA_VAT_NUMBER).
+   */
+  zatca?: { seller: ZatcaSeller; vatRate?: number };
 }
 
 export interface SaleResult {
@@ -66,6 +79,12 @@ export interface SaleResult {
   reference: string;
   netAmount: number;
   clinicalReview: ClinicalReview;
+  /** v4.5 — ZATCA: تفاصيل الفاتورة الضريبية للإيصال */
+  vatRate: number;
+  vatTotal: number;
+  netOfVat: number;
+  invoiceNumber: string | null;
+  zatcaQr: string | null;
 }
 
 /** مراجعة سريرية لبنود بيع/وصفة — تُستدعى قبل الإتمام وفي تفاصيل طابور التحقق */
@@ -124,7 +143,7 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const saleId = await db.$transaction(
+  const txResult = await db.$transaction(
     async (tx) => {
       const keys = params.items.map((i) =>
         i.barcode ? { barcode: String(i.barcode).trim() } : { id: String(i.medicineId) }
@@ -264,6 +283,21 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
       if (discount > total) throw new Error("الخصم أكبر من الإجمالي");
       const net = total - discount;
 
+      // ── v4.5 — ZATCA: الضريبة ضمن الإجمالي + ترقيم تسلسلي ذري ──
+      const vatRate = params.zatca?.vatRate ?? ZATCA_VAT_RATE;
+      const vatTotal = vatFromInclusive(net, vatRate);
+      const netOfVatValue = netOfVat(net, vatTotal);
+      let invoiceNumber: string | null = null;
+      if (params.zatca) {
+        // زيادة ذرية ببيان واحد — السباقان يحصلان على رقمن مختلفين بلا قفل
+        const rows = await tx.$queryRaw<{ lastNumber: number }[]>`
+          INSERT INTO "InvoiceCounter" ("year", "lastNumber") VALUES (${today.getFullYear()}, 1)
+          ON CONFLICT ("year") DO UPDATE SET "lastNumber" = "InvoiceCounter"."lastNumber" + 1
+          RETURNING "lastNumber"
+        `;
+        invoiceNumber = formatInvoiceNumber(today.getFullYear(), rows[0].lastNumber);
+      }
+
       const created = await tx.sale.create({
         data: {
           customerName: params.customerName,
@@ -278,6 +312,18 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
           patientId: clinicalReview.patient?.id ?? params.patientId,
           patientName: clinicalReview.patient?.name ?? null,
           clinicalOverride: clinicalReview.blocking && params.clinicalOverride,
+          vatRate,
+          vatTotal,
+          netOfVat: netOfVatValue,
+          invoiceNumber,
+          zatcaQr: params.zatca
+            ? buildSimplifiedQr({
+                seller: params.zatca.seller,
+                issuedAt: today,
+                totalHalalas: net,
+                vatHalalas: vatTotal,
+              })
+            : null,
           items: {
             create: prepared.map((p) => ({
               medicineId: p.medicineId,
@@ -354,17 +400,28 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
       // خطاف المستدعي داخل نفس الذرية (ربط الوصفة بالفاتورة مثلاً)
       if (params.withinTx) await params.withinTx(tx, created.id);
 
-      return created.id;
+      return {
+        id: created.id,
+        netAmount: created.netAmount,
+        invoiceNumber: created.invoiceNumber,
+        zatcaQr: created.zatcaQr,
+        vatRate,
+        vatTotal,
+        netOfVat: netOfVatValue,
+      };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
   );
 
   return {
-    saleId,
+    saleId: txResult.id,
     reference: params.reference,
-    netAmount: await db.sale
-      .findUniqueOrThrow({ where: { id: saleId }, select: { netAmount: true } })
-      .then((s) => s.netAmount),
+    netAmount: txResult.netAmount,
     clinicalReview,
+    vatRate: txResult.vatRate,
+    vatTotal: txResult.vatTotal,
+    netOfVat: txResult.netOfVat,
+    invoiceNumber: txResult.invoiceNumber,
+    zatcaQr: txResult.zatcaQr,
   };
 }

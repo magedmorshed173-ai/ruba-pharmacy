@@ -1,19 +1,30 @@
 /**
- * scripts/verify-migration.ts — P0-4 (v4.4.1)
- * التحقق من صحة الترحيل الأولي prisma/migrations/0_init/migration.sql
- * بتنفيذه فعلياً داخل PostgreSQL يعمل عبر WASM (PGlite) — بلا خادم وبلا لمس أي قاعدة حية.
+ * scripts/verify-migration.ts — v4.4.1 (P0) ثم رُقّي في v4.5 (P1)
+ * التحقق من صحة كل ترحيلات prisma/migrations/* بتنفيذها بالترتيب داخل
+ * PostgreSQL يعمل عبر WASM (PGlite) — بلا خادم وبلا لمس أي قاعدة حية.
  *
  * التشغيل (يتطلب تثبيت @electric-sql/pglite مؤقتاً):
- *   bun add -d @electric-sql/pglite && bun scripts/verify-migration.ts
+ *   bun run db:verify-migration
  * إن لم تكن الحزمة مثبتة يخرج السكربت بنجاح مع تنبيه (حتى لا يكسر CI).
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const MIGRATION = join(process.cwd(), "prisma/migrations/0_init/migration.sql");
+const MIGRATIONS_DIR = join(process.cwd(), "prisma/migrations");
 
-if (!existsSync(MIGRATION)) {
-  console.error("✗ ملف الترحيل غير موجود:", MIGRATION);
+if (!existsSync(MIGRATIONS_DIR)) {
+  console.error("✗ مجلد الترحيلات غير موجود:", MIGRATIONS_DIR);
+  process.exit(1);
+}
+
+// الترحيلات بالترتيب اللفظي (0_init ثم 1_...) — نفس ترتيب prisma migrate
+const dirs = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+  .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+  .map((d) => d.name)
+  .sort();
+
+if (dirs.length === 0) {
+  console.error("✗ لا توجد ترحيلات للتحقق منها");
   process.exit(1);
 }
 
@@ -33,18 +44,26 @@ try {
   process.exit(0);
 }
 
-const sql = readFileSync(MIGRATION, "utf8");
-
 const db = new PGlite();
 try {
-  await db.exec(sql);
-  // تحقق عكسي: كل نماذج schema.prisma الـ22 يجب أن تكون جداول موجودة
+  for (const dir of dirs) {
+    const file = join(MIGRATIONS_DIR, dir, "migration.sql");
+    if (!existsSync(file)) {
+      console.error(`✗ الترحيل ${dir} بلا ملف migration.sql`);
+      process.exit(1);
+    }
+    await db.exec(readFileSync(file, "utf8"));
+    console.log(`  ✓ نُفّذ ${dir}`);
+  }
+
+  // تحقق عكسي: كل نماذج schema.prisma يجب أن تكون جداول موجودة
   const expected = [
     "User", "Category", "Medicine", "Batch", "DrugInteraction",
     "StockMovement", "RegulatoryAction", "StockReservation", "SaleItemBatch",
     "Supplier", "PurchaseOrder", "PurchaseOrderItem", "Sale", "SaleItem",
     "LoginAudit", "Prescription", "PrescriptionItem", "Patient",
     "Notification", "Session", "Drug", "NationalDrug",
+    "InvoiceCounter", "RateLimit",
   ];
   const res = await db.query<{ tablename: string }>(
     "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
@@ -56,11 +75,25 @@ try {
     console.error("✗ جداول مفقودة بعد التنفيذ:", missing.join(", "));
     process.exit(1);
   }
+
+  // تحقق عكسي إضافي: أعمدة ZATCA على Sale
+  const cols = await db.query<{ column_name: string }>(
+    "SELECT column_name FROM information_schema.columns WHERE table_name = 'Sale'"
+  );
+  const saleCols = new Set(cols.rows.map((r) => r.column_name));
+  const missingCols = ["vatRate", "vatTotal", "netOfVat", "invoiceNumber", "zatcaQr"]
+    .filter((c) => !saleCols.has(c));
+  if (missingCols.length > 0) {
+    console.error("✗ أعمدة ZATCA مفقودة على Sale:", missingCols.join(", "));
+    process.exit(1);
+  }
+
   console.log(
-    `✓ الترحيل 0_init صالح — نُفّذ كاملاً في Postgres (WASM) وأنشأ ${created.size} جدولاً، بما فيها كل الجداول الـ${expected.length} الحاكمة`
+    `✓ كل الترحيلات (${dirs.length}) صالحة — نُفّذت بالترتيب في Postgres (WASM): ` +
+      `${created.size} جدولاً + أعمدة ZATCA مكتملة`
   );
 } catch (e) {
-  console.error("✗ فشل تنفيذ الترحيل:", e instanceof Error ? e.message : e);
+  console.error("✗ فشل تنفيذ الترحيلات:", e instanceof Error ? e.message : e);
   process.exit(1);
 } finally {
   await db.close();

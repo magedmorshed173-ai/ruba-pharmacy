@@ -28,6 +28,10 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ── v4.5 — التحقق بخطوتين TOTP (المدير إلزامياً) ──
+  totpSecret  String? // Base32 — يُعرض فقط في مسار التهيئة
+  totpEnabled Boolean @default(false)
+
   sales          Sale[]
   stockMovements StockMovement[]
   sessions         Session[]
@@ -270,6 +274,14 @@ model Sale {
   patientId        String? // المريض المرتبط — أساس فحص الحساسية والأمراض المزمنة
   patientName      String? // لقطة اسم المريض وقت البيع
   clinicalOverride Boolean  @default(false) // هل تم تجاوز سريري مسؤول؟ (يُراجع في التدقيق)
+
+  // ── v4.5 — ZATCA: الفاتورة الضريبية المبسطة (شاملة الضريبة) ──
+  vatRate       Int     @default(15)  // نسبة الضريبة %
+  vatTotal      Int     @default(0)   // مبلغ الضريبة — هللات (ضمن netAmount)
+  netOfVat      Int     @default(0)   // الصافي قبل الضريبة — هللات
+  invoiceNumber String? @unique       // الترقيم التسلسلي الإلزامي INV-2026-000001
+  zatcaQr       String?               // TLV Base64 — رمز الفاتورة المبسطة (المرحلة الأولى)
+
   saleDate         DateTime @default(now())
 
   items SaleItem[]
@@ -467,4 +479,19 @@ model NationalDrug {
   @@index([licenseStatus])
   @@index([tradeName])
   @@index([genericName])
+}
+
+// ── v4.5 — عدّاد الترقيم التسلسلي للفواتير (ZATCA) ──
+// صف لكل سنة — الزيادة ذرية بـ INSERT..ON CONFLICT..RETURNING داخل معاملة البيع
+model InvoiceCounter {
+  year       Int @id
+  lastNumber Int @default(0)
+}
+
+// ── v4.5 — تقييد المعدل الدائم (بديل الذاكرة القابلة للصفير) ──
+// نافذة ثابتة لكل مفتاح تُكتب في القاعدة — لا تصفير بإعادة التشغيل ولا انقسام بين النسخ
+model RateLimit {
+  key         String   @id
+  count       Int      @default(0)
+  windowStart DateTime
 }

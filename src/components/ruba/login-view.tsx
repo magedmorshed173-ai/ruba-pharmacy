@@ -23,6 +23,10 @@ export function LoginView() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  // ── v4.5 — الخطوة الثانية: تحدي TOTP قصير الأجل ──
+  const [twoFaChallenge, setTwoFaChallenge] = useState<string | null>(null);
+  const [twoFaCode, setTwoFaCode] = useState("");
+  const [twoFaLoading, setTwoFaLoading] = useState(false);
 
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
@@ -32,10 +36,18 @@ export function LoginView() {
     }
     setLoading(true);
     try {
-      await api("/api/auth/login", {
-        method: "POST",
-        json: { username: username.trim(), password },
-      });
+      const res = await api<{ twoFactorRequired?: boolean; challenge?: string; mustEnroll2fa?: boolean }>(
+        "/api/auth/login",
+        {
+          method: "POST",
+          json: { username: username.trim(), password },
+        }
+      );
+      if (res.twoFactorRequired && res.challenge) {
+        setTwoFaChallenge(res.challenge);
+        toast.info("أدخل كود التطبيق المصادق لإكمال الدخول");
+        return;
+      }
       toast.success("مرحباً بك في ربي فارمسي");
       router.refresh();
       window.location.reload();
@@ -43,6 +55,28 @@ export function LoginView() {
       toast.error(err instanceof Error ? err.message : "فشل تسجيل الدخول");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function submitTwoFa(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!/^[0-9]{6}$/.test(twoFaCode.trim())) {
+      toast.error("الكود 6 أرقام من تطبيق المصادقة");
+      return;
+    }
+    setTwoFaLoading(true);
+    try {
+      await api("/api/auth/login/verify", {
+        method: "POST",
+        json: { challenge: twoFaChallenge, code: twoFaCode.trim() },
+      });
+      toast.success("مرحباً بك في ربي فارمسي");
+      router.refresh();
+      window.location.reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "فشل التحقق");
+    } finally {
+      setTwoFaLoading(false);
     }
   }
 
@@ -95,7 +129,7 @@ export function LoginView() {
           </div>
 
           <p className="text-xs text-white/40">
-            إصدار 3.0 · منصة الويب · مبني بتقنيات مفتوحة (Next.js · Prisma · shadcn/ui)
+            إصدار 4.5 · منصة الويب · مبني بتقنيات مفتوحة (Next.js · Prisma · shadcn/ui)
           </p>
         </div>
       </div>
@@ -111,11 +145,52 @@ export function LoginView() {
             <p className="text-xs tracking-[0.25em] text-muted-foreground">RUBA PHARMACY</p>
           </div>
 
-          <h2 className="text-2xl font-bold">تسجيل الدخول</h2>
+          <h2 className="text-2xl font-bold">
+            {twoFaChallenge ? "التحقق بخطوتين" : "تسجيل الدخول"}
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            أدخل بيانات حسابك للوصول إلى لوحة التحكم
+            {twoFaChallenge
+              ? "أدخل الكود الست-رقمي من تطبيق المصادقة في هاتفك"
+              : "أدخل بيانات حسابك للوصول إلى لوحة التحكم"}
           </p>
 
+          {twoFaChallenge ? (
+            <form onSubmit={submitTwoFa} className="mt-8 space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="totp">كود التحقق</Label>
+                <Input
+                  id="totp"
+                  className="num h-11 text-center text-2xl font-bold tracking-[0.5em]"
+                  placeholder="000000"
+                  value={twoFaCode}
+                  onChange={(e) =>
+                    setTwoFaCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))
+                  }
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  dir="ltr"
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={twoFaLoading || twoFaCode.length !== 6}
+                className="h-11 w-full bg-teal-600 text-base font-bold hover:bg-teal-700"
+              >
+                {twoFaLoading ? <Loader2 className="size-5 animate-spin" /> : "تحقق ودخول"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTwoFaChallenge(null);
+                  setTwoFaCode("");
+                }}
+                className="w-full text-center text-xs text-muted-foreground hover:text-foreground"
+              >
+                ← العودة إلى تسجيل الدخول
+              </button>
+            </form>
+          ) : (
           <form onSubmit={submit} className="mt-8 space-y-4">
             <div className="space-y-2">
               <Label htmlFor="username">اسم المستخدم</Label>
@@ -157,6 +232,7 @@ export function LoginView() {
               {loading ? <Loader2 className="size-5 animate-spin" /> : "دخول"}
             </Button>
           </form>
+          )}
 
           <div className="mt-8 rounded-xl border bg-muted/40 p-4">
             <p className="mb-3 text-xs font-bold text-muted-foreground">
