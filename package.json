@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "next build && node scripts/copy-standalone.mjs",
+    "build": "node scripts/prebuild-migrate.mjs && next build && node scripts/copy-standalone.mjs",
     "start": "node .next/standalone/server.js",
     "lint": "eslint .",
     "postinstall": "prisma generate",

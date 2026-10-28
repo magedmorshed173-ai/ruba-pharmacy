@@ -13,8 +13,7 @@ config({ override: process.env.DOTENV_KEEP_ENV !== "1", quiet: true });
 import { DRUGS_A, type DrugSeed } from "./drug-catalog-a";
 import { DRUGS_B, NEW_INTERACTIONS } from "./drug-catalog-b";
 import { INTERACTIONS as BASE_INTERACTIONS } from "./clinical-interactions";
-import { INTERACTIONS_V5A } from "./clinical-interactions-v5a";
-import { INTERACTIONS_V5B } from "./clinical-interactions-v5b";
+import { INTERACTIONS_V5 } from "./clinical-interactions-v5";
 
 const db = new PrismaClient();
 
@@ -78,8 +77,7 @@ async function main() {
   // القاعدة السريرية الكاملة: 24 زوجاً أساسياً (مصدر واحد مشترك مع seed.ts) + 2 زوجان إضافيان للدليل
   for (const [a, b, sev, desc, mech, effect, mgmt, ev, src, onset] of [
     ...BASE_INTERACTIONS,
-    ...INTERACTIONS_V5A,
-    ...INTERACTIONS_V5B,
+    ...INTERACTIONS_V5,
     ...NEW_INTERACTIONS,
   ] as typeof BASE_INTERACTIONS) {
     const [ga, gb] = pairKey(a, b);
