@@ -4,6 +4,7 @@ import {
   sendSnapshotEmail,
   snapshotEmailHtml,
   transfersAlertHtml,
+  expiryAlertHtml,
   type EmailConfig,
 } from "@/lib/report-email";
 import { periodFor } from "@/lib/report-periods";
@@ -158,5 +159,56 @@ describe("report-email — بريد اللقطات (خامد حتى يُضبَط
     const html = transfersAlertHtml([], 0);
     expect(html).toContain("<b>0</b>");
     expect(html).not.toContain("<td style=\"padding:4px 8px\">دواء");
+  });
+});
+
+describe("report-email — تنبيه انتهاء الصلاحية (v5.5)", () => {
+  const NOW = new Date("2026-10-29T10:00:00Z");
+
+  function batch(
+    medicineName: string,
+    expiryDate: string,
+    quantity: number,
+    unitCost: number,
+    lotNumber = "LOT-1"
+  ) {
+    return { medicineName, lotNumber, quantity, unitCost, expiryDate: new Date(expiryDate) };
+  }
+
+  it("يبني تنبيه RTL بالقيمة المهددة وحالة المنتهية/الأيام المتبقية", () => {
+    const html = expiryAlertHtml(
+      [batch("أسبرين & حامض", "2026-10-25T00:00:00Z", 10, 1000), batch("بنادول", "2026-12-10T00:00:00Z", 5, 400)],
+      NOW
+    );
+    expect(html).toContain('dir="rtl"');
+    expect(html).toContain("تنبيه انتهاء الصلاحية");
+    expect(html).toContain("<b>2</b> دفعة");
+    expect(html).toContain("<b>120.00</b> ر.س"); // (10×1000 + 5×400) هللة = 120 ر.س
+    expect(html).toContain("منتهية");
+    expect(html).toContain("42 يوماً"); // 2026-12-10 − 2026-10-29 = 42
+    expect(html).toContain("أسبرين &amp; حامض");
+  });
+
+  it("يرتب الأقرب انتهاءً أولاً ويقتصر على 10 صفوف مهما بلغ العدد", () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      batch(`دواء ${i}`, `2026-11-${String((i % 28) + 1).padStart(2, "0")}T00:00:00Z`, 1, 100, `L${i}`)
+    );
+    const html = expiryAlertHtml(many, NOW);
+    // الأقدم انتهاءً يظهر دائماً (الفرز قبل القص)
+    expect(html).toContain("دواء 7");
+    expect(html).not.toContain("دواء 24");
+    expect(html).toContain("<b>25</b> دفعة"); // الإجمالي كامل حتى مع قص الصفوف
+  });
+
+  it("بقائمة فارغة يبني هيكلاً سالماً بقيمة مهددة صفر", () => {
+    const html = expiryAlertHtml([], NOW);
+    expect(html).toContain("<b>0</b> دفعة");
+    expect(html).toContain("<b>0.00</b> ر.س");
+    expect(html).not.toContain("<td style=\"padding:4px 8px\">دواء");
+  });
+
+  it("يحسب الأيام المتبقية من لحظة now الممررة لا من الآن الفعلي", () => {
+    const html = expiryAlertHtml([batch("دواء", "2026-10-30T00:00:00Z", 1, 100)], NOW);
+    expect(html).toContain("1 يوماً"); // 2026-10-30T00:00Z − 2026-10-29T10:00Z = 14 ساعة → 1
   });
 });

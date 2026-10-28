@@ -1,20 +1,27 @@
 import { db } from "@/lib/db";
 import { fail, ok, requireAuth } from "@/lib/api-guard";
+import { astParts, astDate } from "@/lib/report-periods";
+import { buildAnalytics } from "@/lib/analytics";
+
+const DAY_MS = 86_400_000;
 
 // GET /api/dashboard — إحصائيات اللوحة الرئيسية
+// v5.5 — «البصيرة التحليلية»: كل حدود اليوم والشهر بتوقيت الرياض (UTC+3)
+// لا UTC — إصلاح نفس عائلة علة v5.1.0: كان «إيراد اليوم» يبدأ من منتصف
+// ليل UTC (3 فجراً بالرياض على Vercel) ورسم الاتجاه يجمّع بأيام UTC.
 export async function GET() {
   const { error } = await requireAuth();
   if (error) return error;
 
   try {
     const now = new Date();
-    const startToday = new Date(now);
-    startToday.setHours(0, 0, 0, 0);
-    const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const in30 = new Date(now.getTime() + 30 * 86400000);
-    const today10 = new Date(now.toISOString().slice(0, 10));
+    const p = astParts(now);
+    const startToday = astDate(p.y, p.m, p.d); // منتصف ليل الرياض
+    const startMonth = astDate(p.y, p.m, 1); // أول الشهر الميلادي بالرياض
+    const in30 = new Date(now.getTime() + 30 * DAY_MS);
+    const since30 = astDate(p.y, p.m, p.d - 29); // نافذة الاتجاه: 30 يوماً شاملة اليوم
 
-    const [revenueTodayAgg, revenueMonthAgg, salesCountToday, totalMedicines, lowStockCount, expiredCount, expiring30Count, unreadNotifications, recentSales, lowStockList, expiringList] =
+    const [revenueTodayAgg, revenueMonthAgg, salesCountToday, totalMedicines, lowStockCount, expiredCount, expiring30Count, unreadNotifications, recentSales, lowStockList, expiringList, sales30, batches] =
       await Promise.all([
         db.sale.aggregate({
           _sum: { netAmount: true },
@@ -27,9 +34,11 @@ export async function GET() {
         db.sale.count({ where: { saleDate: { gte: startToday }, status: "completed" } }),
         db.medicine.count({ where: { isActive: true } }),
         db.medicine.count({ where: { isActive: true, quantity: { lte: db.medicine.fields.minQuantity } } }),
-        db.medicine.count({ where: { isActive: true, expiryDate: { lte: today10 } } }),
+        // منتهية الصلاحية: تاريخ الانتهاء قبل فجر اليوم بالرياض — الدفعة ذات
+        // تاريخ اليوم تبقى صالحة للعرض ضمن «قاربت» حتى نهاية يومها
+        db.medicine.count({ where: { isActive: true, expiryDate: { lt: startToday } } }),
         db.medicine.count({
-          where: { isActive: true, expiryDate: { gt: today10, lte: in30 } },
+          where: { isActive: true, expiryDate: { gte: startToday, lte: in30 } },
         }),
         db.notification.count({ where: { isRead: false } }),
         db.sale.findMany({
@@ -45,10 +54,27 @@ export async function GET() {
           take: 6,
         }),
         db.medicine.findMany({
-          where: { isActive: true, expiryDate: { gt: today10, lte: in30 } },
+          where: { isActive: true, expiryDate: { gte: startToday, lte: in30 } },
           select: { id: true, name: true, expiryDate: true, quantity: true },
           orderBy: { expiryDate: "asc" },
           take: 6,
+        }),
+        // نافذة الاتجاه كاملة مع بنودها — أساس الربح والهامش ومزيج الدفع
+        db.sale.findMany({
+          where: { status: "completed", saleDate: { gte: since30 } },
+          select: {
+            saleDate: true,
+            netAmount: true,
+            paymentMethod: true,
+            items: {
+              select: { medicineName: true, quantity: true, subtotal: true, costHalalas: true },
+            },
+          },
+        }),
+        // الدفعات الحية — أساس دلاء انتهاء الصلاحية والقيمة المهددة
+        db.batch.findMany({
+          where: { isActive: true, isRecalled: false, quantity: { gt: 0 } },
+          select: { expiryDate: true, quantity: true, unitCost: true },
         }),
       ]);
 
@@ -62,33 +88,9 @@ export async function GET() {
       0
     );
 
-    // مبيعات آخر 14 يوماً للرسم البياني
-    const since14 = new Date(startToday.getTime() - 13 * 86400000);
-    const sales14 = await db.sale.groupBy({
-      by: ["saleDate"],
-      _sum: { netAmount: true },
-      _count: { id: true },
-      where: { saleDate: { gte: since14 }, status: "completed" },
-    });
-
-    const dayMap = new Map<string, { revenue: number; count: number }>();
-    for (let i = 0; i < 14; i++) {
-      const d = new Date(since14.getTime() + i * 86400000);
-      dayMap.set(d.toISOString().slice(0, 10), { revenue: 0, count: 0 });
-    }
-    for (const row of sales14) {
-      const key = row.saleDate.toISOString().slice(0, 10);
-      const cur = dayMap.get(key) ?? { revenue: 0, count: 0 };
-      dayMap.set(key, {
-        revenue: cur.revenue + (row._sum.netAmount ?? 0),
-        count: cur.count + row._count.id,
-      });
-    }
-    const dailySeries = Array.from(dayMap.entries()).map(([date, v]) => ({
-      date,
-      revenue: v.revenue,
-      count: v.count,
-    }));
+    // التحليلات التنفيذية النقية — اتجاه 30 يوماً + أعلى الأصناف + مزيج
+    // الدفع + دلاء الصلاحية + الملخص (بتوقيت الرياض عبر analytics.ts)
+    const analytics = buildAnalytics(sales30, batches, 30, now);
 
     // توزيع التصنيفات
     const categoryDist = await db.medicine.groupBy({
@@ -119,7 +121,7 @@ export async function GET() {
         inventoryCostValue,
         unreadNotifications,
       },
-      dailySeries,
+      analytics,
       categorySeries,
       recentSales,
       lowStockList,

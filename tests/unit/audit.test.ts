@@ -61,7 +61,7 @@ describe("audit — jsonSafeMeta تطبيع JSON الآمن", () => {
     expect(jsonSafeMeta(true)).toBe(true);
     expect(jsonSafeMeta(null)).toBeNull();
     expect(jsonSafeMeta(new Date("2026-01-02T03:04:05Z"))).toBe("2026-01-02T03:04:05.000Z");
-    expect(jsonSafeMeta(10n)).toBe("10");
+    expect(jsonSafeMeta(BigInt(10))).toBe("10");
   });
 
   it("يقطع المرجع الدائري دون استثناء", () => {

@@ -15,7 +15,9 @@ import {
   sendSnapshotEmail,
   snapshotEmailHtml,
   transfersAlertHtml,
+  expiryAlertHtml,
   type PendingTransferInfo,
+  type ExpiringBatchInfo,
   type SnapshotEmailData,
 } from "@/lib/report-email";
 
@@ -179,6 +181,7 @@ async function runCadence(request: NextRequest) {
     // بريد ملخص اليومية — best-effort لا يُسقط الاستجابة
     let emailed = false;
     let transfersAlerted = false;
+    let expiryAlerted = false;
     // v5.4 — تقليم سجل التدقيق مع الدورة اليومية (الاحتفاظ سنة — صيانة بلا تدخل)
     const auditPruned = await pruneAuditLogs(db, now);
     if (dailyData) {
@@ -227,10 +230,49 @@ async function runCadence(request: NextRequest) {
         } catch {
           // التنبيه best-effort — فشله لا يمس التقرير
         }
+
+        // v5.5 — تنبيه انتهاء الصلاحية (منتهية + خلال 60 يوماً) مع التقرير اليومي
+        try {
+          const in60 = new Date(now.getTime() + 60 * 24 * 3600 * 1000);
+          const expiring = await db.batch.findMany({
+            where: {
+              isActive: true,
+              isRecalled: false,
+              quantity: { gt: 0 },
+              expiryDate: { lte: in60 },
+            },
+            orderBy: { expiryDate: "asc" },
+            take: 40,
+            select: {
+              lotNumber: true,
+              quantity: true,
+              unitCost: true,
+              expiryDate: true,
+              medicine: { select: { name: true } },
+            },
+          });
+          if (expiring.length > 0) {
+            const info: ExpiringBatchInfo[] = expiring.map((b) => ({
+              medicineName: b.medicine.name,
+              lotNumber: b.lotNumber,
+              quantity: b.quantity,
+              unitCost: b.unitCost,
+              expiryDate: b.expiryDate,
+            }));
+            const alert = await sendSnapshotEmail(
+              cfg,
+              `تنبيه صلاحية: ${info.length} دفعة خلال 60 يوماً — صيدلية رُبى`,
+              expiryAlertHtml(info, now)
+            );
+            expiryAlerted = alert.ok;
+          }
+        } catch {
+          // التنبيه best-effort — فشله لا يمس التقرير
+        }
       }
     }
 
-    return ok({ created: true, kinds: done, emailed, transfersAlerted, auditPruned });
+    return ok({ created: true, kinds: done, emailed, transfersAlerted, expiryAlerted, auditPruned });
   } catch {
     return fail("تعذر توليد لقطة التقرير", 500);
   }

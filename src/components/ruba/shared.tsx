@@ -12,6 +12,7 @@ export function StatCard({
   title,
   value,
   isMoney = false,
+  suffix,
   icon,
   tone = "teal",
   sub,
@@ -20,6 +21,7 @@ export function StatCard({
   title: string;
   value: number;
   isMoney?: boolean;
+  suffix?: string; // v5.5 — لاحقة عرض مثل «%» للنِسَب
   icon: ReactNode;
   tone?: "teal" | "amber" | "rose" | "sky" | "violet" | "emerald";
   sub?: string;
@@ -45,6 +47,9 @@ export function StatCard({
               {isMoney ? fmtMoney(value) : fmtNum(value)}
               {isMoney && (
                 <span className="ms-1 text-xs font-medium text-muted-foreground">ر.س</span>
+              )}
+              {suffix && (
+                <span className="ms-1 text-xs font-medium text-muted-foreground">{suffix}</span>
               )}
             </p>
           )}

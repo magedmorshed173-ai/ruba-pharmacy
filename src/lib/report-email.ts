@@ -153,6 +153,52 @@ export function transfersAlertHtml(items: PendingTransferInfo[], total: number):
 </div>`;
 }
 
+/* ── v5.5 — تنبيه انتهاء الصلاحية ──────────────────────────────────── */
+
+export interface ExpiringBatchInfo {
+  medicineName: string;
+  lotNumber: string;
+  quantity: number;
+  unitCost: number; // هللات
+  expiryDate: Date | string;
+}
+
+/** HTML تنبيه عربي RTL بالدفعات المنتهية أو التي تنتهي خلال 60 يوماً */
+export function expiryAlertHtml(items: ExpiringBatchInfo[], now: Date = new Date()): string {
+  const sorted = [...items].sort(
+    (a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime()
+  );
+  const risk = sorted.reduce((acc, b) => acc + (Number(b.quantity) || 0) * (Number(b.unitCost) || 0), 0);
+  const rows = sorted
+    .slice(0, 10)
+    .map((b) => {
+      const daysLeft = Math.ceil((new Date(b.expiryDate).getTime() - now.getTime()) / 86_400_000);
+      const status =
+        daysLeft <= 0
+          ? `<span style="color:#dc2626;font-weight:700">منتهية</span>`
+          : `<span style="color:#b45309">${daysLeft} يوماً</span>`;
+      return (
+        `<tr>` +
+        `<td style="padding:4px 8px">${escHtml(b.medicineName)}</td>` +
+        `<td style="padding:4px 8px">${escHtml(b.lotNumber)}</td>` +
+        `<td style="padding:4px 8px"><b>${Number(b.quantity) || 0}</b></td>` +
+        `<td style="padding:4px 8px">${status}</td>` +
+        `<td style="padding:4px 8px">${fmtAstDate(new Date(b.expiryDate))}</td>` +
+        `</tr>`
+      );
+    })
+    .join("");
+  return `<div dir="rtl" style="font-family:sans-serif;max-width:560px">
+  <h2 style="margin:0 0 4px;color:#b45309">تنبيه انتهاء الصلاحية — صيدلية رُبى</h2>
+  <p style="color:#555;margin:0 0 12px">لديك <b>${sorted.length}</b> دفعة منتهية أو تنتهي خلال 60 يوماً — قيمة مهددة <b>${sar(risk)}</b> ر.س بالتكلفة.</p>
+  <table style="border-collapse:collapse;width:100%">
+    <tr style="color:#555;text-align:start"><th style="padding:4px 8px">الدواء</th><th style="padding:4px 8px">التشغيلة</th><th style="padding:4px 8px">الكمية</th><th style="padding:4px 8px">الحالة</th><th style="padding:4px 8px">تنتهي</th></tr>
+    ${rows}
+  </table>
+  <p style="color:#999;font-size:12px;margin-top:14px">الدفعات المنتهية محجوبة عن الصرف آلياً (FEFO) — أخرجها من الرف وراجع أوامر الإرجاع مع الموردين. ${fmtAstDate(now)}</p>
+</div>`;
+}
+
 /**
  * إرسال فعلي عبر Resend — يُرجع نتيجة ولا يرمي استثناءً أبداً.
  * `post` قابلة للحقن للاختبار.
