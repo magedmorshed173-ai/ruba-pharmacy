@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { api, fmtMoney, fmtNum, fmtDate } from "@/lib/api-client";
 import type { AuthUser } from "@/lib/types";
 import { StatCard, LoadingRows } from "./shared";
@@ -29,6 +29,9 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import { claimStatusLabel } from "@/lib/insurance"; // v4.6
+
+/** v5.1 — تسمية عربية لأنواع اللقطات (محلية للواجهة) */
+const SNAP_KIND_AR = { daily: "يومي", weekly: "أسبوعي", monthly: "شهري" } as const;
 import {
   Banknote,
   CalendarDays,
@@ -36,6 +39,7 @@ import {
   TrendingUp,
   PackagePlus,
   Download,
+  FileSpreadsheet,
   Loader2,
   Trophy,
   PiggyBank,
@@ -147,6 +151,9 @@ export function ReportsView({ user }: { user: AuthUser }) {
   }
   const [snapshots, setSnapshots] = useState<SnapRow[] | null>(null);
   const [snapRunning, setSnapRunning] = useState(false);
+  // ── v5.1 — فلتر نوع اللقطة + حالة التصدير ──
+  const [snapKind, setSnapKind] = useState<"all" | "daily" | "weekly" | "monthly">("all");
+  const [snapExporting, setSnapExporting] = useState(false);
 
   const loadSales = useCallback(async (bid: string) => {
     try {
@@ -195,26 +202,57 @@ export function ReportsView({ user }: { user: AuthUser }) {
       .catch(() => setRestock([]));
   }, [loadSales]);
 
-  // v5.0 — لقطات التقارير المجدولة
+  // v5.1 — لقطات التقارير المجدولة (يومي/أسبوعي/شهري + فلتر + تصدير Excel)
   const loadSnapshots = useCallback(async () => {
     try {
-      const r = await api<{ snapshots: SnapRow[] }>("/api/reports/snapshot");
+      const q = snapKind !== "all" ? `?kind=${snapKind}` : "";
+      const r = await api<{ snapshots: SnapRow[] }>(`/api/reports/snapshot${q}`);
       setSnapshots(r.snapshots);
+      snapLoadedRef.current = true;
     } catch {
       setSnapshots([]);
     }
-  }, []);
+  }, [snapKind]);
 
-  async function runSnapshotNow() {
+  async function runSnapshotNow(kind: "daily" | "weekly" | "monthly" = "daily") {
     setSnapRunning(true);
     try {
-      await api("/api/reports/snapshot", { method: "POST" });
-      toast.success("وُلّدت لقطة أمس — جاهزة للعرض والطباعة");
+      const r = await api<{ kinds?: string[] }>(
+        `/api/reports/snapshot${kind === "daily" ? "" : `?kind=${kind}`}`,
+        { method: "POST" }
+      );
+      const names: Record<string, string> = { daily: "يومية", weekly: "أسبوعية", monthly: "شهرية" };
+      const made = r.kinds?.length ? r.kinds.map((k) => names[k] ?? k).join(" + ") : names[kind];
+      toast.success(`وُلّدت لقطة ${made} — جاهزة للعرض والطباعة`);
       await loadSnapshots();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "تعذر التوليد");
     } finally {
       setSnapRunning(false);
+    }
+  }
+
+  // v5.1 — تصدير Excel (جلب كملف ثم تنزيله — يحمل جلسة الدخول تلقائياً)
+  async function exportSnapshotsExcel() {
+    setSnapExporting(true);
+    try {
+      const q = snapKind !== "all" ? `?kind=${snapKind}` : "";
+      const res = await fetch(`/api/reports/snapshot/export${q}`, { credentials: "include" });
+      if (!res.ok) throw new Error("فشل التصدير");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ruba-snapshots${snapKind !== "all" ? `-${snapKind}` : ""}-${new Date()
+        .toISOString()
+        .slice(0, 10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("تم تصدير ملف Excel");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "فشل التصدير");
+    } finally {
+      setSnapExporting(false);
     }
   }
 
@@ -245,6 +283,12 @@ export function ReportsView({ user }: { user: AuthUser }) {
       setExporting(false);
     }
   }
+
+  // v5.1 — إعادة الجلب عند تغيّر فلتر النوع (إن كانت البيانات محمّلة أصلاً)
+  const snapLoadedRef = useRef(false);
+  useEffect(() => {
+    if (snapLoadedRef.current) loadSnapshots();
+  }, [snapKind, loadSnapshots]);
 
   async function updateClaim(saleId: string, status: string) {
     try {
@@ -830,26 +874,39 @@ export function ReportsView({ user }: { user: AuthUser }) {
             )}
           </div>
         </TabsContent>
-        {/* v5.0 — تبويب التقارير المجدولة */}
+        {/* v5.1 — تبويب التقارير المجدولة (يومي/أسبوعي/شهري) */}
         <TabsContent value="scheduled" className="mt-4 space-y-4">
           <div className="rounded-xl border bg-card p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="flex items-center gap-2 text-sm font-bold">
-                  <CalendarDays className="size-4 text-teal-600" /> لقطات يومية آلية
+                  <CalendarDays className="size-4 text-teal-600" /> لقطات آلية — يومي/أسبوعي/شهري
                 </h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  منتصف كل ليلة (00:00 بتوقيت السعودية) يولّد النظام لقطة يوم كامل —
-                  جاهزة للعرض والطباعة PDF بضغطة واحدة.
+                  منتصف كل ليلة (00:00 بتوقيت السعودية) تُولّد اللقطة اليومية، وأول الاثنين
+                  الأسبوعية، وأول الشهر الشهرية — كلها بتوقيت الرياض وجاهزة للعرض والطباعة PDF
+                  والتصدير إلى Excel.
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {isAdminUser && (
-                  <Button size="sm" onClick={runSnapshotNow} disabled={snapRunning} className="bg-teal-600 hover:bg-teal-700">
-                    {snapRunning ? <Loader2 className="size-4 animate-spin" /> : <TrendingUp className="size-4" />}
-                    توليد لقطة أمس الآن
-                  </Button>
+                  <>
+                    <Button size="sm" onClick={() => runSnapshotNow()} disabled={snapRunning} className="bg-teal-600 hover:bg-teal-700">
+                      {snapRunning ? <Loader2 className="size-4 animate-spin" /> : <TrendingUp className="size-4" />}
+                      يومية الآن
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => runSnapshotNow("weekly")} disabled={snapRunning}>
+                      أسبوعية الآن
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => runSnapshotNow("monthly")} disabled={snapRunning}>
+                      شهرية الآن
+                    </Button>
+                  </>
                 )}
+                <Button size="sm" variant="outline" onClick={exportSnapshotsExcel} disabled={snapExporting}>
+                  {snapExporting ? <Loader2 className="size-4 animate-spin" /> : <FileSpreadsheet className="size-4" />}
+                  تصدير Excel
+                </Button>
                 <Button size="sm" variant="outline" onClick={loadSnapshots}>
                   <Download className="size-4" /> تحديث
                 </Button>
@@ -857,18 +914,37 @@ export function ReportsView({ user }: { user: AuthUser }) {
             </div>
           </div>
 
+          {/* فلاتر النوع */}
+          <div className="flex flex-wrap gap-2">
+            {(["all", "daily", "weekly", "monthly"] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setSnapKind(k)}
+                className={`rounded-full border px-3 py-1 text-xs font-bold transition-colors ${
+                  snapKind === k
+                    ? "border-teal-600 bg-teal-600 text-white"
+                    : "bg-card text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {k === "all" ? "الكل" : SNAP_KIND_AR[k]}
+              </button>
+            ))}
+          </div>
+
           <div className="rounded-xl border bg-card">
             {snapshots === null ? (
               <div className="p-6 text-center text-sm text-muted-foreground">جارٍ الجلب…</div>
             ) : snapshots.length === 0 ? (
               <div className="p-6 text-center text-sm text-muted-foreground">
-                لا لقطات بعد — انتظر التوليد الآلي منتصف الليل أو اضغط «توليد لقطة أمس الآن».
+                لا لقطات بعد — انتظر التوليد الآلي منتصف الليل أو اضغط «يومية الآن».
               </div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-start">اليوم</TableHead>
+                    <TableHead className="text-start">النوع</TableHead>
+                    <TableHead className="text-start">الفترة</TableHead>
                     <TableHead className="text-start">الفواتير</TableHead>
                     <TableHead className="text-start">صافي (ر.س)</TableHead>
                     <TableHead className="text-start">نواقص</TableHead>
@@ -879,6 +955,20 @@ export function ReportsView({ user }: { user: AuthUser }) {
                 <TableBody>
                   {snapshots.map((s) => (
                     <TableRow key={s.id}>
+                      <TableCell className="text-start">
+                        <Badge
+                          variant="outline"
+                          className={
+                            s.kind === "monthly"
+                              ? "border-purple-300 bg-purple-50 text-purple-700"
+                              : s.kind === "weekly"
+                                ? "border-sky-300 bg-sky-50 text-sky-700"
+                                : "border-teal-300 bg-teal-50 text-teal-700"
+                          }
+                        >
+                          {SNAP_KIND_AR[s.kind as keyof typeof SNAP_KIND_AR] ?? s.kind}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-start">
                         {new Date(s.periodStart).toLocaleDateString("ar", {
                           timeZone: "UTC",

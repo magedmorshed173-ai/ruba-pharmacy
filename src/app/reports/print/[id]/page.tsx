@@ -1,10 +1,16 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/api-guard";
 import { db } from "@/lib/db";
+import {
+  KIND_LABEL_AR,
+  fmtAstDate,
+  isSnapshotKind,
+  type SnapshotKind,
+} from "@/lib/report-periods";
 import { PrintButton } from "./print-button";
 
 /**
- * v5.0 — صفحة طباعة لقطة تقرير يومي (/reports/print/[id])
+ * v5.1 — صفحة طباعة لقطة تقرير (يومي/أسبوعي/شهري) (/reports/print/[id])
  *
  * PDF عربي مثالي عبر محرك الطباعة في المتصفح (RTL أصيل بلا مكتبات PDF
  * التي تكسر تشكيل الحروف) — الصفحة مستقلة بلا قوائم، CSS طباعة نظيف،
@@ -46,8 +52,15 @@ export default async function PrintReportPage({
   }
   const d = (snapshot.data ?? {}) as SnapshotData;
   const sar = (halalas: number) => (halalas / 100).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const kind: SnapshotKind = isSnapshotKind(snapshot.kind) ? snapshot.kind : "daily";
+  const kindAr = KIND_LABEL_AR[kind];
+  const periodText =
+    kind === "daily"
+      ? fmtAstDate(new Date(snapshot.periodStart))
+      : `${fmtAstDate(new Date(snapshot.periodStart))} إلى ${fmtAstDate(
+          new Date(new Date(snapshot.periodEnd).getTime() - 24 * 3600 * 1000)
+        )}`;
   const day = snapshot.periodStart.toLocaleDateString("ar-SA-u-ca-islamic", { timeZone: "UTC" });
-  const dayGreg = snapshot.periodStart.toLocaleDateString("ar", { timeZone: "UTC", dateStyle: "long" });
 
   return (
     <div dir="rtl" className="mx-auto max-w-3xl bg-white p-8 text-slate-900 print:p-4">
@@ -55,9 +68,9 @@ export default async function PrintReportPage({
 
       <header className="mb-6 flex items-start justify-between border-b-2 border-teal-600 pb-4">
         <div>
-          <h1 className="text-2xl font-extrabold">التقرير اليومي — ربي فارمسي</h1>
+          <h1 className="text-2xl font-extrabold">التقرير {kindAr} — ربي فارمسي</h1>
           <p className="mt-1 text-sm text-slate-600">
-            {dayGreg} · {day} — لقطة آلية (v5.0)
+            الفترة: {periodText} · {day} — لقطة آلية (v5.1)
           </p>
         </div>
         <PrintButton auto={auto === "1"} />
@@ -99,12 +112,12 @@ export default async function PrintReportPage({
       <section className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat label="أصناف تحت الحد الأدنى" value={String(d.lowStockCount ?? 0)} />
         <Stat label="دفعات تنتهي خلال 30 يوماً" value={String(d.expiringBatches30 ?? 0)} />
-        <Stat label="وصفات اليوم" value={String(d.prescriptionsCount ?? 0)} />
+        <Stat label={kind === "daily" ? "وصفات اليوم" : "وصفات الفترة"} value={String(d.prescriptionsCount ?? 0)} />
       </section>
 
       <footer className="border-t pt-3 text-[11px] text-slate-500">
         وُلّدت اللقطة آلياً بتاريخ {d.generatedAt ? new Date(d.generatedAt).toLocaleString("ar") : "—"} ·
-        المستند تثقيفي إداري ولا يغني عن سجلات النظام · ربي فارمسي v5.0
+        المستند تثقيفي إداري ولا يغني عن سجلات النظام · ربي فارمسي v5.1
       </footer>
     </div>
   );

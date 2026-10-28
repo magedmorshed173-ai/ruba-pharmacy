@@ -3,17 +3,38 @@ import { db } from "@/lib/db";
 import { fail, ok, requireAuth, requireRole } from "@/lib/api-guard";
 import { createDbRateLimiter } from "@/lib/rate-limit-db";
 import { clientIp } from "@/lib/auth";
+import {
+  dueKinds,
+  isSnapshotKind,
+  periodFor,
+  type SnapshotKind,
+} from "@/lib/report-periods";
+import {
+  emailConfigFromEnv,
+  sendSnapshotEmail,
+  snapshotEmailHtml,
+  type SnapshotEmailData,
+} from "@/lib/report-email";
 
 /**
- * v5.0 — التقارير المجدولة
+ * v5.1 — التقارير المجدولة (يومي/أسبوعي/شهري بتوقيت الرياض)
  *
- * GET  /api/reports/snapshot — آخر 30 لقطة (خلف بوابة القفل + جلسة)
- * POST /api/reports/snapshot — توليد لقطة أمس (صف واحد لكل يوم — إعادة التشغيل لا تكرر):
+ * GET  /api/reports/snapshot[?kind=daily]      — آخر 30 لقطة (بوابة القفل + جلسة)
+ * POST /api/reports/snapshot[?kind=...]        — توليد لقطة (صف واحد لكل فترة — إعادة التشغيل لا تكرر):
  *   • CRON_SECRET مضبوط: كرون Vercel يمرّ برأس Authorization: Bearer (نمط Vercel الموثق)
  *   • جلسة مدير: للتشغيل اليدوي من اللوحة
  *   • CRON_SECRET غير مضبوط: الكرون يمرّ بلا رأس — النقطة تسمح مقيّدةً
  *     بـ 10/دقيقة لكل IP (نكتب اللقطة نفسها المحسوبة من القاعدة — لا تسريب
  *     ولا بيانات، وأسوأ حالة حمل محدود) — ضبط CRON_SECRET يشدّدها تلقائياً.
+ *
+ * سلسلة التواريخ (v5.1): كرون واحد يومي 00:00 الرياض (حد Hobby في Vercel)
+ * يولّد اليومية دائماً، والأسبوعية أول الاثنين، والشهرية أول الشهر —
+ * عبر dueKinds()، وكلها idempotent بمفتاح فريد [kind, periodStart].
+ * الفترات كلها بتوقيت الرياض عبر periodFor() — أُصلحت v5.0 التي كانت
+ * تحسب اليوم بمنتصف ليل UTC فتُسقط مبيعات المساء في اليوم الخطأ.
+ *
+ * البريد (v5.1): بعد نجاح اللقطة اليومية، إن ضُبط RESEND_API_KEY و
+ * REPORT_EMAIL_TO يُرسل ملخص عربي عبر Resend — best-effort لا يُسقط التوليد.
  */
 
 export const dynamic = "force-dynamic";
@@ -21,11 +42,15 @@ export const dynamic = "force-dynamic";
 /** مقيّد وضع الكرون المفتوح (CRON_SECRET غير مضبوط): 10 محاولات/دقيقة لكل IP */
 const snapshotRateLimiter = createDbRateLimiter(10, 60);
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const { error } = await requireAuth();
   if (error) return error;
 
+  const kindParam = request.nextUrl.searchParams.get("kind") ?? "";
+  const kindFilter = kindParam && isSnapshotKind(kindParam) ? kindParam : undefined;
+
   const snapshots = await db.reportSnapshot.findMany({
+    where: kindFilter ? { kind: kindFilter } : undefined,
     orderBy: { periodStart: "desc" },
     take: 30,
   });
@@ -37,11 +62,11 @@ export async function POST(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret) {
     const auth = request.headers.get("authorization") ?? "";
-    if (auth === `Bearer ${cronSecret}`) return runSnapshot();
+    if (auth === `Bearer ${cronSecret}`) return runCadence(request);
     // لا رأس مطابق ⇒ التشغيل اليدوي: جلسة مدير حصراً
     const { error } = await requireRole("admin");
     if (error) return error;
-    return runSnapshot();
+    return runCadence(request);
   }
   // 2) CRON_SECRET غير مضبوط — وضع الكرون المفتوح: مقيّد صارم لكل IP
   const ip = clientIp(request.headers);
@@ -53,74 +78,115 @@ export async function POST(request: NextRequest) {
       { retryAfterSec: limit.retryAfterSec }
     );
   }
-  return runSnapshot();
+  return runCadence(request);
 }
 
-async function runSnapshot() {
+/** حلّ النوع المطلوب من الاستعلام (الافتراضي يومي) */
+function requestedKind(request: NextRequest): SnapshotKind {
+  const k = request.nextUrl.searchParams.get("kind") ?? "daily";
+  return isSnapshotKind(k) ? k : "daily";
+}
+
+/** يبني بيانات الفترة ويكتبها (upsert idempotent) — يُرجع بياناتها للبريد */
+async function writeSnapshot(kind: SnapshotKind, now: Date) {
+  const { periodStart, periodEnd } = periodFor(kind, now);
+  const start = periodStart;
+  const end = periodEnd;
+  const todayUtc = end.getTime();
+
+  const salesAgg = await db.sale.aggregate({
+    _sum: { netAmount: true, discount: true },
+    where: { saleDate: { gte: start, lt: end }, status: "completed" },
+  });
+  const salesCount = await db.sale.count({
+    where: { saleDate: { gte: start, lt: end }, status: "completed" },
+  });
+  const voided = await db.sale.count({
+    where: { saleDate: { gte: start, lt: end }, status: "void" },
+  });
+
+  const topItems = await db.saleItem.groupBy({
+    by: ["medicineName"],
+    _sum: { quantity: true, subtotal: true },
+    where: { sale: { saleDate: { gte: start, lt: end }, status: "completed" } },
+    orderBy: { _sum: { quantity: "desc" } },
+    take: 5,
+  });
+
+  const expiringBatches = await db.batch.count({
+    where: {
+      isActive: true,
+      isRecalled: false,
+      expiryDate: { lte: new Date(todayUtc + 30 * 24 * 3600 * 1000) },
+    },
+  });
+  const lowStock = await db.$queryRaw<{ c: number }[]>`
+    SELECT COUNT(*)::int AS c FROM "Medicine"
+    WHERE "isActive" = true AND "quantity" <= "minQuantity" AND "minQuantity" > 0
+  `;
+  const prescriptions = await db.prescription.count({
+    where: { createdAt: { gte: start, lt: end } },
+  });
+
+  const data = {
+    salesCount,
+    netRevenueHalalas: salesAgg._sum.netAmount ?? 0,
+    discountHalalas: salesAgg._sum.discount ?? 0,
+    voidedCount: voided,
+    topItems: topItems.map((t) => ({
+      name: t.medicineName,
+      qty: t._sum.quantity ?? 0,
+      subtotalHalalas: t._sum.subtotal ?? 0,
+    })),
+    lowStockCount: lowStock[0]?.c ?? 0,
+    expiringBatches30: expiringBatches,
+    prescriptionsCount: prescriptions,
+    generatedAt: new Date().toISOString(),
+  };
+
+  const snapshot = await db.reportSnapshot.upsert({
+    where: { kind_periodStart: { kind, periodStart } },
+    update: { data, periodEnd },
+    create: { kind, periodStart, periodEnd, data },
+  });
+  return snapshot;
+}
+
+/** التنفيذ الفعلي: اللقطة المطلوبة + سلسلة التواريخ + بريد اليومية */
+async function runCadence(request: NextRequest) {
   try {
-    // نافذة أمس بتوقيت UTC — مستقرة عبر النسخ ولا تتأثر بمنطقة خادم الطلب
+    const kind = requestedKind(request);
     const now = new Date();
-    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    const periodStart = new Date(todayUtc - 24 * 3600 * 1000);
-    const periodEnd = new Date(todayUtc);
+    const done: string[] = [];
 
-    const salesAgg = await db.sale.aggregate({
-      _sum: { netAmount: true, discount: true },
-      where: { saleDate: { gte: periodStart, lt: periodEnd }, status: "completed" },
-    });
-    const salesCount = await db.sale.count({
-      where: { saleDate: { gte: periodStart, lt: periodEnd }, status: "completed" },
-    });
-    const voided = await db.sale.count({
-      where: { saleDate: { gte: periodStart, lt: periodEnd }, status: "void" },
-    });
+    // التشغيل اليدوي بنوع محدد يولّده حصراً؛ الكرون (بلا kind أو kind=daily)
+    // يمرّ عبر سلسلة dueKinds ليلتقط الأسبوعية/الشهرية في موعدهما.
+    const manualKind = request.nextUrl.searchParams.get("kind");
+    const kinds = manualKind && isSnapshotKind(manualKind) ? [kind] : dueKinds(now);
 
-    const topItems = await db.saleItem.groupBy({
-      by: ["medicineName"],
-      _sum: { quantity: true, subtotal: true },
-      where: { sale: { saleDate: { gte: periodStart, lt: periodEnd }, status: "completed" } },
-      orderBy: { _sum: { quantity: "desc" } },
-      take: 5,
-    });
+    let dailyData: SnapshotEmailData | null = null;
+    for (const k of kinds) {
+      const snap = await writeSnapshot(k, now);
+      done.push(k);
+      if (k === "daily") dailyData = snap.data as SnapshotEmailData;
+    }
 
-    const expiringBatches = await db.batch.count({
-      where: {
-        isActive: true,
-        isRecalled: false,
-        expiryDate: { lte: new Date(todayUtc + 30 * 24 * 3600 * 1000) },
-      },
-    });
-    const lowStock = await db.$queryRaw<{ c: number }[]>`
-      SELECT COUNT(*)::int AS c FROM "Medicine"
-      WHERE "isActive" = true AND "quantity" <= "minQuantity" AND "minQuantity" > 0
-    `;
-    const prescriptions = await db.prescription.count({
-      where: { createdAt: { gte: periodStart, lt: periodEnd } },
-    });
+    // بريد ملخص اليومية — best-effort لا يُسقط الاستجابة
+    let emailed = false;
+    if (dailyData) {
+      const cfg = emailConfigFromEnv();
+      if (cfg) {
+        const period = periodFor("daily", now);
+        const res = await sendSnapshotEmail(
+          cfg,
+          `تقرير يومي — صيدلية رُبى (${period.label})`,
+          snapshotEmailHtml(period, dailyData)
+        );
+        emailed = res.ok;
+      }
+    }
 
-    const data = {
-      salesCount,
-      netRevenueHalalas: salesAgg._sum.netAmount ?? 0,
-      discountHalalas: salesAgg._sum.discount ?? 0,
-      voidedCount: voided,
-      topItems: topItems.map((t) => ({
-        name: t.medicineName,
-        qty: t._sum.quantity ?? 0,
-        subtotalHalalas: t._sum.subtotal ?? 0,
-      })),
-      lowStockCount: lowStock[0]?.c ?? 0,
-      expiringBatches30: expiringBatches,
-      prescriptionsCount: prescriptions,
-      generatedAt: new Date().toISOString(),
-    };
-
-    const snapshot = await db.reportSnapshot.upsert({
-      where: { kind_periodStart: { kind: "daily", periodStart } },
-      update: { data, periodEnd },
-      create: { kind: "daily", periodStart, periodEnd, data },
-    });
-
-    return ok({ created: true, snapshot });
+    return ok({ created: true, kinds: done, emailed });
   } catch {
     return fail("تعذر توليد لقطة التقرير", 500);
   }
