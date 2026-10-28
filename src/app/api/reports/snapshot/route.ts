@@ -13,6 +13,8 @@ import {
   emailConfigFromEnv,
   sendSnapshotEmail,
   snapshotEmailHtml,
+  transfersAlertHtml,
+  type PendingTransferInfo,
   type SnapshotEmailData,
 } from "@/lib/report-email";
 
@@ -35,6 +37,8 @@ import {
  *
  * البريد (v5.1): بعد نجاح اللقطة اليومية، إن ضُبط RESEND_API_KEY و
  * REPORT_EMAIL_TO يُرسل ملخص عربي عبر Resend — best-effort لا يُسقط التوليد.
+ * v5.3: مع الملخص يُفحص التحويلات المعلقة — إن وُجدت يُرسل تنبيه منفصل
+ * بقائمة أقدم 10 بانتظار القبول (نفس بوابة البريد، best-effort).
  */
 
 export const dynamic = "force-dynamic";
@@ -173,6 +177,7 @@ async function runCadence(request: NextRequest) {
 
     // بريد ملخص اليومية — best-effort لا يُسقط الاستجابة
     let emailed = false;
+    let transfersAlerted = false;
     if (dailyData) {
       const cfg = emailConfigFromEnv();
       if (cfg) {
@@ -183,10 +188,46 @@ async function runCadence(request: NextRequest) {
           snapshotEmailHtml(period, dailyData)
         );
         emailed = res.ok;
+
+        // v5.3 — تنبيه التحويلات المعلقة مع التقرير اليومي (best-effort)
+        try {
+          const pendingCount = await db.stockTransfer.count({ where: { status: "pending" } });
+          if (pendingCount > 0) {
+            const pending = await db.stockTransfer.findMany({
+              where: { status: "pending" },
+              orderBy: { createdAt: "asc" },
+              take: 10,
+              select: {
+                quantity: true,
+                createdAt: true,
+                medicine: { select: { name: true } },
+                fromBranch: { select: { name: true } },
+                toBranch: { select: { name: true } },
+                createdBy: { select: { username: true } },
+              },
+            });
+            const info: PendingTransferInfo[] = pending.map((t) => ({
+              medicineName: t.medicine.name,
+              fromName: t.fromBranch?.name ?? null,
+              toName: t.toBranch.name,
+              quantity: t.quantity,
+              createdAt: t.createdAt,
+              creator: t.createdBy?.username ?? null,
+            }));
+            const alert = await sendSnapshotEmail(
+              cfg,
+              `تنبيه: ${pendingCount} تحويل مخزون معلق — صيدلية رُبى`,
+              transfersAlertHtml(info, pendingCount)
+            );
+            transfersAlerted = alert.ok;
+          }
+        } catch {
+          // التنبيه best-effort — فشله لا يمس التقرير
+        }
       }
     }
 
-    return ok({ created: true, kinds: done, emailed });
+    return ok({ created: true, kinds: done, emailed, transfersAlerted });
   } catch {
     return fail("تعذر توليد لقطة التقرير", 500);
   }

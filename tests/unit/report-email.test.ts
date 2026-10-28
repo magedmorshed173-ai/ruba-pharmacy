@@ -3,6 +3,7 @@ import {
   emailConfigFromEnv,
   sendSnapshotEmail,
   snapshotEmailHtml,
+  transfersAlertHtml,
   type EmailConfig,
 } from "@/lib/report-email";
 import { periodFor } from "@/lib/report-periods";
@@ -116,5 +117,46 @@ describe("report-email — بريد اللقطات (خامد حتى يُضبَط
       post
     );
     expect(res).toEqual({ ok: false, error: "ECONNREFUSED" });
+  });
+
+  it("transfersAlertHtml يبني تنبيه RTL بالمسار والكمية والتهريب", () => {
+    const html = transfersAlertHtml(
+      [
+        {
+          medicineName: "أسبرين & حامض",
+          fromName: null,
+          toName: "فرع النور",
+          quantity: 12,
+          createdAt: new Date("2026-10-27T21:30:00Z"),
+          creator: "مدير",
+        },
+      ],
+      3
+    );
+    expect(html).toContain('dir="rtl"');
+    expect(html).toContain("تحويلات مخزون معلقة");
+    expect(html).toContain("<b>3</b>");
+    expect(html).toContain("المستودع ← فرع النور");
+    expect(html).toContain("أسبرين &amp; حامض");
+    expect(html).toContain("28 أكتوبر 2026");
+  });
+
+  it("transfersAlertHtml يقتصر على أقدم 10 صفوف مهما بلغ العدد", () => {
+    const many = Array.from({ length: 25 }, (_, i) => ({
+      medicineName: `دواء ${i}`,
+      fromName: null,
+      toName: "فرع",
+      quantity: 1,
+      createdAt: new Date(2026, 0, 1),
+    }));
+    const html = transfersAlertHtml(many, 25);
+    expect(html).toContain("دواء 9");
+    expect(html).not.toContain("دواء 10");
+  });
+
+  it("transfersAlertHtml بقائمة فارغة يبني هيكلاً سالماً", () => {
+    const html = transfersAlertHtml([], 0);
+    expect(html).toContain("<b>0</b>");
+    expect(html).not.toContain("<td style=\"padding:4px 8px\">دواء");
   });
 });

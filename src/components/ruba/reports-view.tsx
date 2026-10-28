@@ -154,6 +154,9 @@ export function ReportsView({ user }: { user: AuthUser }) {
   // ── v5.1 — فلتر نوع اللقطة + حالة التصدير ──
   const [snapKind, setSnapKind] = useState<"all" | "daily" | "weekly" | "monthly">("all");
   const [snapExporting, setSnapExporting] = useState(false);
+  // ── v5.3 — تصدير الفواتير Excel ──
+  const [salesExporting, setSalesExporting] = useState(false);
+  const [salesDays, setSalesDays] = useState(30);
 
   const loadSales = useCallback(async (bid: string) => {
     try {
@@ -256,6 +259,27 @@ export function ReportsView({ user }: { user: AuthUser }) {
     }
   }
 
+  // v5.3 — تصدير الفواتير Excel (نافذة أيام متاحة 7/30/90)
+  async function exportSalesExcel(days = salesDays) {
+    setSalesExporting(true);
+    try {
+      const res = await fetch(`/api/reports/sales/export?days=${days}`, { credentials: "include" });
+      if (!res.ok) throw new Error("فشل التصدير");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ruba-sales-${days}d-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("تم تصدير الفواتير إلى Excel");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "فشل التصدير");
+    } finally {
+      setSalesExporting(false);
+    }
+  }
+
   async function exportCsv() {
     setExporting(true);
     try {
@@ -343,6 +367,28 @@ export function ReportsView({ user }: { user: AuthUser }) {
 
         {/* تبويب المبيعات */}
         <TabsContent value="sales" className="mt-4 space-y-4">
+          {/* v5.3 — تصدير الفواتير Excel */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <select
+              className="h-9 rounded-md border bg-card px-3 text-sm"
+              value={salesDays}
+              onChange={(e) => setSalesDays(Number(e.target.value))}
+              aria-label="نافذة التصدير"
+            >
+              <option value={7}>آخر 7 أيام</option>
+              <option value={30}>آخر 30 يوماً</option>
+              <option value={90}>آخر 90 يوماً</option>
+              <option value={365}>آخر سنة</option>
+            </select>
+            <Button size="sm" variant="outline" onClick={() => exportSalesExcel()} disabled={salesExporting}>
+              {salesExporting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="size-4" />
+              )}
+              تصدير الفواتير Excel
+            </Button>
+          </div>
           {/* v4.6 — فلتر الفرع */}
           {branches.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
