@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { fail, ok, requireRole } from "@/lib/api-guard";
+import { recordAudit } from "@/lib/audit";
+import { clientIp } from "@/lib/auth";
 
 const PUBLIC_FIELDS = {
   id: true,
@@ -31,7 +33,7 @@ export async function GET() {
 
 // POST /api/users — إضافة مستخدم (مدير فقط)
 export async function POST(request: NextRequest) {
-  const { error } = await requireRole("admin");
+  const { user, error } = await requireRole("admin");
   if (error) return error;
 
   try {
@@ -49,17 +51,33 @@ export async function POST(request: NextRequest) {
     const exists = await db.user.findUnique({ where: { username } });
     if (exists) return fail("اسم المستخدم موجود مسبقاً", 409);
 
-    const user = await db.user.create({
-      data: {
-        username,
-        fullName,
-        role,
-        phone: String(body.phone ?? "").trim() || null,
-        password: await bcrypt.hash(password, 10),
-      },
-      select: PUBLIC_FIELDS,
+    const hashed = await bcrypt.hash(password, 10);
+    const ip = clientIp(request.headers);
+
+    // v5.4 — الإنشاء والتوثيق في معاملة واحدة: لا مستخدم بلا سجل تدقيق
+    const created = await db.$transaction(async (tx) => {
+      const u = await tx.user.create({
+        data: {
+          username,
+          fullName,
+          role,
+          phone: String(body.phone ?? "").trim() || null,
+          password: hashed,
+        },
+        select: PUBLIC_FIELDS,
+      });
+      await recordAudit(tx, {
+        action: "user.create",
+        entityType: "user",
+        entityId: u.id,
+        summary: `إضافة المستخدم ${u.fullName} (${u.username}) بدور ${u.role}`,
+        meta: { username, role, phone: u.phone },
+        actor: user,
+        ip,
+      });
+      return u;
     });
-    return ok({ user }, 201);
+    return ok({ user: created }, 201);
   } catch {
     return fail("تعذر إضافة المستخدم", 500);
   }

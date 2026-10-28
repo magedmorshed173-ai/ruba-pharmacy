@@ -18,6 +18,7 @@ import { VerifyQueueView } from "./verify-queue-view";
 import { DrugGuideView } from "./drug-guide-view";
 import { NationalRegistryView } from "./national-registry-view";
 import { LoginAuditsCard } from "./login-audits-card";
+import { AuditView } from "./audit-view"; // v5.4
 import { OfflineBanner } from "./offline-banner";
 import { LockExpiryWatcher } from "./lock-expiry-watcher";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -52,7 +53,7 @@ import {
 } from "lucide-react";
 import { ROLE_LABEL } from "@/lib/role-label";
 import { useTheme } from "next-themes";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, History } from "lucide-react";
 
 type ViewKey =
   | "dashboard"
@@ -66,6 +67,7 @@ type ViewKey =
   | "reports"
   | "notifications"
   | "users"
+  | "audit"
   | "settings";
 
 const NAV: { key: ViewKey; label: string; icon: typeof LayoutDashboard; minRole?: string }[] = [
@@ -80,6 +82,7 @@ const NAV: { key: ViewKey; label: string; icon: typeof LayoutDashboard; minRole?
   { key: "reports", label: "التقارير", icon: BarChart3 },
   { key: "notifications", label: "الإشعارات", icon: Bell },
   { key: "users", label: "المستخدمون", icon: UserCog, minRole: "admin" },
+  { key: "audit", label: "التدقيق", icon: History, minRole: "admin" }, // v5.4
   { key: "settings", label: "الإعدادات", icon: Settings },
 ];
 
@@ -322,11 +325,12 @@ export function AppShell() {
               <LoginAuditsCard />
             </div>
           )}
+          {view === "audit" && user.role === "admin" && <AuditView />}
           {view === "settings" && <SettingsView user={user} onLogout={logout} />}
         </main>
 
         <footer className="mt-auto border-t bg-card/60 py-3 text-center text-xs text-muted-foreground">
-          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 4.3
+          ربي فارمسي · منصة إدارة الصيدليات العربية · إصدار 5.4
         </footer>
       </div>
     </div>

@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { fail, ok, requireAuth, requireRole } from "@/lib/api-guard";
 import { validateTransferInput } from "@/lib/transfers";
+import { recordAudit } from "@/lib/audit";
+import { clientIp } from "@/lib/auth";
 
 /**
  * v5.2 — تحويلات المخزون بين الفروع
@@ -71,20 +73,39 @@ export async function POST(request: NextRequest) {
       if (!fromBranch || !fromBranch.isActive) return fail("فرع المصدر غير موجود أو موقوف", 404);
     }
 
-    const transfer = await db.stockTransfer.create({
-      data: {
-        medicineId: input.medicineId,
-        fromBranchId: input.fromBranchId,
-        toBranchId: input.toBranchId,
-        quantity: Math.floor(input.quantity),
-        note: input.note,
-        createdByUserId: user.id,
-      },
-      include: {
-        medicine: { select: { name: true } },
-        fromBranch: { select: { name: true } },
-        toBranch: { select: { name: true } },
-      },
+    // v5.4 — الإنشاء وتوثيقه في معاملة واحدة: لا تحويل بلا أثر مساءلة
+    const transfer = await db.$transaction(async (tx) => {
+      const t = await tx.stockTransfer.create({
+        data: {
+          medicineId: input.medicineId,
+          fromBranchId: input.fromBranchId,
+          toBranchId: input.toBranchId,
+          quantity: Math.floor(input.quantity),
+          note: input.note,
+          createdByUserId: user.id,
+        },
+        include: {
+          medicine: { select: { name: true } },
+          fromBranch: { select: { name: true } },
+          toBranch: { select: { name: true } },
+        },
+      });
+      await recordAudit(tx, {
+        action: "transfer.create",
+        entityType: "transfer",
+        entityId: t.id,
+        summary: `تحويل ${t.quantity} ${t.medicine.name} إلى ${t.toBranch.name}`, // المصدر: null = المستودع المركزي
+        meta: {
+          medicine: t.medicine.name,
+          quantity: t.quantity,
+          from: t.fromBranch?.name ?? "المستودع المركزي",
+          to: t.toBranch.name,
+          note: t.note,
+        },
+        actor: user,
+        ip: clientIp(request.headers),
+      });
+      return t;
     });
     return ok({ transfer });
   } catch {

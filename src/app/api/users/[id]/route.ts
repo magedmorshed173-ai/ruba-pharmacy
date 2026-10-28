@@ -4,7 +4,8 @@ import { db } from "@/lib/db";
 import { fail, ok, requireRole } from "@/lib/api-guard";
 import { getSessionUser } from "@/lib/api-guard";
 import { cookies } from "next/headers";
-import { COOKIE_NAME, hashToken, revokeAllUserSessions } from "@/lib/auth";
+import { COOKIE_NAME, hashToken, revokeAllUserSessions, clientIp } from "@/lib/auth";
+import { recordAudit } from "@/lib/audit";
 
 const PUBLIC_FIELDS = {
   id: true,
@@ -24,7 +25,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireRole("admin");
+  const { user, error } = await requireRole("admin");
   if (error) return error;
 
   const { id } = await params;
@@ -72,11 +73,42 @@ export async function PUT(
       if (activeAdmins === 0) return fail("يجب أن يبقى مدير نظام فعال واحد على الأقل");
     }
 
-    const user = await db.user.update({ where: { id }, data, select: PUBLIC_FIELDS });
+    // v5.4 — كشف الفروق للسجل (كلمة المرور لا تُخزّن أبداً — فقط حقيقة تغييرها)
+    const changes: Record<string, { from?: unknown; to?: unknown; changed?: boolean }> = {};
+    if (data.fullName !== undefined && data.fullName !== existing.fullName)
+      changes.fullName = { from: existing.fullName, to: data.fullName };
+    if (data.phone !== undefined) changes.phone = { from: existing.phone, to: data.phone };
+    if (data.role !== undefined && data.role !== existing.role)
+      changes.role = { from: existing.role, to: data.role };
+    if (data.isActive !== undefined && data.isActive !== existing.isActive)
+      changes.isActive = { from: existing.isActive, to: data.isActive };
+    if (data.branchId !== undefined) changes.branchId = { from: existing.branchId, to: data.branchId };
+    const passwordChanged = Boolean(body.password);
+    if (passwordChanged) changes.password = { changed: true };
+
+    const bits: string[] = [];
+    if (changes.role) bits.push(`الدور: ${String(changes.role.from)} → ${String(changes.role.to)}`);
+    if (changes.isActive) bits.push(changes.isActive.to === false ? "إيقاف الحساب" : "تفعيل الحساب");
+    if (passwordChanged) bits.push("تغيير كلمة المرور");
+
+    const ip = clientIp(request.headers);
+    // v5.4 — التعديل والتوثيق في معاملة واحدة
+    const updated = await db.$transaction(async (tx) => {
+      const u = await tx.user.update({ where: { id }, data, select: PUBLIC_FIELDS });
+      await recordAudit(tx, {
+        action: "user.update",
+        entityType: "user",
+        entityId: id,
+        summary: `تعديل المستخدم ${existing.username}${bits.length ? " — " + bits.join("، ") : ""}`,
+        meta: { username: existing.username, changes },
+        actor: user,
+        ip,
+      });
+      return u;
+    });
 
     // v3.9: تغيير كلمة المرور أو إيقاف الحساب = إنهاء جلسات الهدف فوراً
     // (الجلسة الحالية للمُغيّر نفسه تبقى حية — بقية الأجهزة تنتهي)
-    const passwordChanged = Boolean(body.password);
     const deactivated = data.isActive === false;
     if (passwordChanged || deactivated) {
       const currentToken = (await cookies()).get(COOKIE_NAME)?.value;
@@ -87,7 +119,7 @@ export async function PUT(
       await revokeAllUserSessions(id, keepCurrent);
     }
 
-    return ok({ user });
+    return ok({ user: updated });
   } catch {
     return fail("تعذر تعديل المستخدم", 500);
   }
@@ -98,7 +130,7 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireRole("admin");
+  const { user, error } = await requireRole("admin");
   if (error) return error;
 
   const { id } = await params;
@@ -115,12 +147,41 @@ export async function DELETE(
       return fail("يجب أن يبقى مدير نظام فعال واحد على الأقل");
 
     if (used) {
-      await db.user.update({ where: { id }, data: { isActive: false } });
+      // v5.4 — الإيقاف وتوثيقه في معاملة واحدة (السجل يبقى بعد الحذف: نسخ جامدة)
+      await db.$transaction(async (tx) => {
+        await tx.user.update({ where: { id }, data: { isActive: false } });
+        await recordAudit(tx, {
+          action: "user.deactivate",
+          entityType: "user",
+          entityId: id,
+          summary: `إيقاف المستخدم ${target?.username ?? id} (مرتبط بمبيعات — بديل الحذف)`,
+          meta: {
+            username: target?.username,
+            fullName: target?.fullName,
+            role: target?.role,
+            linkedToSales: true,
+          },
+          actor: user,
+          ip: clientIp(_request.headers),
+        });
+      });
       // v3.9: إيقاف الحساب ينهي كل جلساته فوراً (بلا استثناء — الحساب موقوف)
       await revokeAllUserSessions(id);
       return ok({ message: "المستخدم مرتبط بمبيعات — تم إيقاف حسابه بدل حذفه", deactivated: true });
     }
-    await db.user.delete({ where: { id } });
+    // v5.4 — الحذف وتوثيقه في معاملة واحدة (المفتاح الخارجي SetNull يُبقي السجل باسمه الجامد)
+    await db.$transaction(async (tx) => {
+      await tx.user.delete({ where: { id } });
+      await recordAudit(tx, {
+        action: "user.delete",
+        entityType: "user",
+        entityId: id,
+        summary: `حذف المستخدم ${target?.username ?? id}`,
+        meta: { username: target?.username, fullName: target?.fullName, role: target?.role },
+        actor: user,
+        ip: clientIp(_request.headers),
+      });
+    });
     return ok({ message: "تم حذف المستخدم", deleted: true });
   } catch {
     return fail("تعذر حذف المستخدم", 500);

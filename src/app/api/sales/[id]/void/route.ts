@@ -1,10 +1,12 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { fail, ok, requireRole } from "@/lib/api-guard";
+import { recordAudit } from "@/lib/audit";
+import { clientIp } from "@/lib/auth";
 
 // POST /api/sales/:id/void — إلغاء بيع واسترجاع المخزون (صيدلي فما فوق)
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { user, error } = await requireRole("pharmacist");
@@ -62,6 +64,26 @@ export async function POST(
       }
 
       await tx.sale.update({ where: { id }, data: { status: "void" } });
+
+      // v5.4 — توثيق الإلغاء داخل نفس المعاملة (لا إلغاء بلا تدقيق، والعكس
+      // كذلك: فشل المعاملة يُسقط التوثيق معها). ملاحظة: clinicalOverride
+      // يُرفق دائماً — الإلغاء لحافة تجاوز سريري يستحق ظهوراً أوضح في المراجعة.
+      await recordAudit(tx, {
+        action: "sale.void",
+        entityType: "sale",
+        entityId: sale.id,
+        summary: `إلغاء الفاتورة ${sale.reference} (${sale.itemsCount} بند) واسترجاع كمياتها`,
+        meta: {
+          reference: sale.reference,
+          netAmount: sale.netAmount,
+          paymentMethod: sale.paymentMethod,
+          patientName: sale.patientName,
+          clinicalOverride: sale.clinicalOverride,
+          itemsCount: sale.itemsCount,
+        },
+        actor: user,
+        ip: clientIp(request.headers),
+      });
     });
 
     return ok({ message: "تم إلغاء الفاتورة وإرجاع الكميات للمخزون" });

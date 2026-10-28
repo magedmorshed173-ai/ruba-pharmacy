@@ -41,6 +41,7 @@ model User {
   sessions          Session[]
   transfersCreated  StockTransfer[] @relation("transfersCreator")
   transfersAccepted StockTransfer[] @relation("transfersAcceptor")
+  auditLogs         AuditLog[]      @relation("auditActor")
 }
 
 // ───────────────────────────── المخزون ─────────────────────────────
@@ -658,4 +659,28 @@ model ReportSnapshot {
 
   @@unique([kind, periodStart])
   @@index([createdAt])
+}
+
+// ── v5.4 — سجل التدقيق الشامل ──
+// المساءلة التنظيمية (نمط SFDA: التوثيق أساس اليقظة الدوائية): كل عملية
+// حساسة تُوثَّق بفاعلها وسياقها في نفس معاملتها (لا تدقيق بلا عملية).
+// userName/userRole نسختان جامدتان — السجل يبقى صادقاً بعد أي تعديل لاحق
+// للمستخدم، وrecordAudit لا يُسقط العملية الرئيسة أبداً (best-effort).
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String // sale.void | user.create | batch.update | transfer.accept | ...
+  entityType String // sale | user | batch | transfer | medicine | ...
+  entityId   String?
+  summary    String // وصف عربي موجز يُعرض في الواجهة
+  meta       Json? // تفاصيل مرجعية: مرجع الفاتورة، المبالغ، الفروقات، السبب
+  userId     String?
+  user       User?    @relation("auditActor", fields: [userId], references: [id])
+  userName   String? // نسخة جامدة من الاسم لحظة العملية
+  userRole   String? // نسخة جامدة من الدور لحظة العملية
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([userId, createdAt])
 }

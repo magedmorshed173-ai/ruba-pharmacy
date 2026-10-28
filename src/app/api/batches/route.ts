@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { fail, ok, requireAuth, requireRole } from "@/lib/api-guard";
 import { toInt } from "@/lib/money";
+import { recordAudit } from "@/lib/audit";
+import { clientIp } from "@/lib/auth";
 
 /**
  * GET /api/batches?medicineId=&soon=30 — قائمة الدفعات
@@ -107,6 +109,22 @@ export async function POST(request: NextRequest) {
           reference: `LOT ${lotNumber}`,
           userId: user.id,
         },
+      });
+      // v5.4 — إدخال الدفعة وتوثيقها في نفس المعاملة (لا دخول مخزون بلا أثر مساءلة)
+      await recordAudit(tx, {
+        action: "batch.create",
+        entityType: "batch",
+        entityId: batch.id,
+        summary: `إضافة دفعة ${lotNumber} للدواء ${med.name} — ${quantity} وحدة`,
+        meta: {
+          lotNumber,
+          quantity,
+          expiryDate,
+          unitCost: batch.unitCost,
+          medicine: med.name,
+        },
+        actor: user,
+        ip: clientIp(request.headers),
       });
       return batch;
     });

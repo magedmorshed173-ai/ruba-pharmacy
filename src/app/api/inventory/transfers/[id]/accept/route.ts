@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { fail, ok, requireRole } from "@/lib/api-guard";
 import { planAccept } from "@/lib/transfers";
+import { recordAudit } from "@/lib/audit";
+import { clientIp } from "@/lib/auth";
 
 /**
  * v5.2 — قبول تحويل مخزون (مدير حصراً)
@@ -81,7 +83,8 @@ export async function POST(
         });
       }
 
-      return tx.stockTransfer.update({
+      // v5.4 — التنفيذ وتوثيقه ذرياً (نفس المعاملة التي طبّقت المرايا)
+      const updated = await tx.stockTransfer.update({
         where: { id },
         data: {
           status: "accepted",
@@ -94,6 +97,21 @@ export async function POST(
           toBranch: { select: { name: true } },
         },
       });
+      await recordAudit(tx, {
+        action: "transfer.accept",
+        entityType: "transfer",
+        entityId: id,
+        summary: `تنفيذ تحويل ${updated.quantity} ${updated.medicine.name} إلى ${updated.toBranch.name}`, // المصدر: null = المستودع المركزي
+        meta: {
+          medicine: updated.medicine.name,
+          quantity: updated.quantity,
+          from: updated.fromBranch?.name ?? "المستودع المركزي",
+          to: updated.toBranch.name,
+        },
+        actor: user,
+        ip: clientIp(_request.headers),
+      });
+      return updated;
     });
 
     return ok({ transfer: result });

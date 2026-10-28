@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { fail, ok, requireAuth, requireRole } from "@/lib/api-guard";
 import { createDbRateLimiter } from "@/lib/rate-limit-db";
 import { clientIp } from "@/lib/auth";
+import { pruneAuditLogs } from "@/lib/audit";
 import {
   dueKinds,
   isSnapshotKind,
@@ -178,6 +179,8 @@ async function runCadence(request: NextRequest) {
     // بريد ملخص اليومية — best-effort لا يُسقط الاستجابة
     let emailed = false;
     let transfersAlerted = false;
+    // v5.4 — تقليم سجل التدقيق مع الدورة اليومية (الاحتفاظ سنة — صيانة بلا تدخل)
+    const auditPruned = await pruneAuditLogs(db, now);
     if (dailyData) {
       const cfg = emailConfigFromEnv();
       if (cfg) {
@@ -227,7 +230,7 @@ async function runCadence(request: NextRequest) {
       }
     }
 
-    return ok({ created: true, kinds: done, emailed, transfersAlerted });
+    return ok({ created: true, kinds: done, emailed, transfersAlerted, auditPruned });
   } catch {
     return fail("تعذر توليد لقطة التقرير", 500);
   }
