@@ -38,6 +38,27 @@ export async function POST(
             userId: user.id,
           },
         });
+        // ── v5.2 — رجوع مرآة الفرع: إن كان الدواء مُوزَّعاً بيع من رصيد فرعه،
+        // فالإلغاء يعيد الكمية لتخصيص الفرع نفسه (upsert يضمن الصف) ──
+        const distRows = await tx.branchStock.count({
+          where: { medicineId: med.id },
+        });
+        if (distRows > 0 && sale.branchId) {
+          await tx.branchStock.upsert({
+            where: {
+              medicineId_branchId: {
+                medicineId: med.id,
+                branchId: sale.branchId,
+              },
+            },
+            update: { quantity: { increment: item.quantity } },
+            create: {
+              medicineId: med.id,
+              branchId: sale.branchId,
+              quantity: item.quantity,
+            },
+          });
+        }
       }
 
       await tx.sale.update({ where: { id }, data: { status: "void" } });

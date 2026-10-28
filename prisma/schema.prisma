@@ -36,9 +36,11 @@ model User {
   branchId String?
   branch   Branch? @relation(fields: [branchId], references: [id])
 
-  sales          Sale[]
-  stockMovements StockMovement[]
-  sessions         Session[]
+  sales             Sale[]
+  stockMovements    StockMovement[]
+  sessions          Session[]
+  transfersCreated  StockTransfer[] @relation("transfersCreator")
+  transfersAccepted StockTransfer[] @relation("transfersAcceptor")
 }
 
 // ───────────────────────────── المخزون ─────────────────────────────
@@ -71,7 +73,7 @@ model Medicine {
   atcClass             String? // الفئة العلاجية الوظيفية (مثل مضادات التهاب غير ستيرويدية)
   maxDailyDose         Int? // الحد الأقصى للوحدات/يوم — أساس فحص الجرعة
   registrationNo       String? // رقم التسجيل في السجل الوطني للدواء
-  registryStatus       String   @default("registered") // registered | suspended | banned | unregistered
+  registryStatus       String    @default("registered") // registered | suspended | banned | unregistered
   maxRetailPrice       Int? // سقف السعر البيعي الوطني (هللات) — تجاوزه إنذار تسعيري
   nationalDrugId       String? // ربط المنتج المحلي بسجله المرخص الوطني (v4.1)
   pregnancyCategory    String? // فئة الحمل FDA (A B C D X) — أساس بوابة الحمل (v4.3)
@@ -79,14 +81,16 @@ model Medicine {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  saleItems SaleItem[]
-  movements StockMovement[]
-  batches   Batch[]
-  poItems   PurchaseOrderItem[]
+  saleItems         SaleItem[]
+  movements         StockMovement[]
+  batches           Batch[]
+  poItems           PurchaseOrderItem[]
   prescriptionItems PrescriptionItem[]
   regulatoryActions RegulatoryAction[]
   reservations      StockReservation[]
-  nationalDrug      NationalDrug? @relation(fields: [nationalDrugId], references: [id])
+  nationalDrug      NationalDrug?       @relation(fields: [nationalDrugId], references: [id])
+  branchStocks      BranchStock[]
+  transfers         StockTransfer[]
 
   @@index([genericName, dosage])
   @@index([expiryDate])
@@ -99,19 +103,19 @@ model Medicine {
 // دفعات (LOT) — المعيار العالمي في الصيدليات (Odoo/ERPNext):
 // صلاحية مستقلة لكل دفعة + صرف FEFO (الأقرب انتهاءً يُصرف أولاً)
 model Batch {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   medicineId String
-  medicine   Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  medicine   Medicine  @relation(fields: [medicineId], references: [id], onDelete: Cascade)
   lotNumber  String // رقم التشغيلة
   expiryDate DateTime
-  quantity   Int      @default(0) // وحدات متبقية بالدفعة
-  unitCost   Int      @default(0) // هللات — تكلفة الشراء الفعلية للدفعة
+  quantity   Int       @default(0) // وحدات متبقية بالدفعة
+  unitCost   Int       @default(0) // هللات — تكلفة الشراء الفعلية للدفعة
   supplier   String? // المورد
-  isActive   Boolean  @default(true)
+  isActive   Boolean   @default(true)
   isRecalled Boolean   @default(false) // دفعة مسحوبة من التداول — محجوبة عن الصرف نهائياً
   recalledAt DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   @@unique([medicineId, lotNumber])
   @@index([medicineId, isActive])
@@ -263,44 +267,44 @@ model PurchaseOrderItem {
 // ───────────────────────────── المبيعات ─────────────────────────────
 
 model Sale {
-  id               String   @id @default(cuid())
-  customerName     String   @default("عميل نقدي")
+  id               String  @id @default(cuid())
+  customerName     String  @default("عميل نقدي")
   customerPhone    String?
   itemsCount       Int
   totalAmount      Int // هللات
-  discount         Int      @default(0) // هللات
+  discount         Int     @default(0) // هللات
   netAmount        Int // هللات
-  paymentMethod    String   @default("cash") // cash | card | insurance
-  status           String   @default("completed") // completed | void
-  reference        String   @unique // Idempotency — معرّف العملية الفريد
+  paymentMethod    String  @default("cash") // cash | card | insurance
+  status           String  @default("completed") // completed | void
+  reference        String  @unique // Idempotency — معرّف العملية الفريد
   userId           String
-  user             User     @relation(fields: [userId], references: [id])
+  user             User    @relation(fields: [userId], references: [id])
   patientId        String? // المريض المرتبط — أساس فحص الحساسية والأمراض المزمنة
   patientName      String? // لقطة اسم المريض وقت البيع
-  clinicalOverride Boolean  @default(false) // هل تم تجاوز سريري مسؤول؟ (يُراجع في التدقيق)
+  clinicalOverride Boolean @default(false) // هل تم تجاوز سريري مسؤول؟ (يُراجع في التدقيق)
 
   // ── v4.5 — ZATCA: الفاتورة الضريبية المبسطة (شاملة الضريبة) ──
-  vatRate       Int     @default(15)  // نسبة الضريبة %
-  vatTotal      Int     @default(0)   // مبلغ الضريبة — هللات (ضمن netAmount)
-  netOfVat      Int     @default(0)   // الصافي قبل الضريبة — هللات
-  invoiceNumber String? @unique       // الترقيم التسلسلي الإلزامي INV-2026-000001
-  zatcaQr       String?               // TLV Base64 — رمز الفاتورة المبسطة (المرحلة الأولى)
+  vatRate       Int     @default(15) // نسبة الضريبة %
+  vatTotal      Int     @default(0) // مبلغ الضريبة — هللات (ضمن netAmount)
+  netOfVat      Int     @default(0) // الصافي قبل الضريبة — هللات
+  invoiceNumber String? @unique // الترقيم التسلسلي الإلزامي INV-2026-000001
+  zatcaQr       String? // TLV Base64 — رمز الفاتورة المبسطة (المرحلة الأولى)
 
   // ── v4.6 — التأمين الطبي: تقسيم المطلوب على السطر المالي ──
-  insuranceProviderId String?                 // شركة التأمين
+  insuranceProviderId String? // شركة التأمين
   insuranceProvider   InsuranceProvider?      @relation(fields: [insuranceProviderId], references: [id])
-  insurancePolicyId   String?                 // بوليصة المريض المستخدمة
+  insurancePolicyId   String? // بوليصة المريض المستخدمة
   insurancePolicy     PatientInsurancePolicy? @relation(fields: [insurancePolicyId], references: [id])
-  insurerAmount       Int     @default(0)     // حصة المؤمن — هللات
-  patientAmount       Int     @default(0)     // حصة المريض — هللات (insurer + patient = netAmount)
-  claimStatus         String?                 // pending | approved | rejected | paid — يُفتح تلقائياً عند البيع بالتأمين
+  insurerAmount       Int                     @default(0) // حصة المؤمن — هللات
+  patientAmount       Int                     @default(0) // حصة المريض — هللات (insurer + patient = netAmount)
+  claimStatus         String? // pending | approved | rejected | paid — يُفتح تلقائياً عند البيع بالتأمين
   claimUpdatedAt      DateTime?
 
   // ── v4.6 — الفرع الصادر منه البيع ──
-  branchId    String?
-  branch      Branch? @relation(fields: [branchId], references: [id])
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id])
 
-  saleDate         DateTime @default(now())
+  saleDate DateTime @default(now())
 
   items SaleItem[]
 
@@ -324,10 +328,10 @@ model SaleItem {
   subtotal     Int // هللات
   costHalalas  Int      @default(0) // لقطة تكلفة الدفعات (FEFO) وقت البيع — أساس تقارير الأرباح
 
+  batches SaleItemBatch[]
+
   @@index([saleId])
   @@index([medicineId])
-
-  batches SaleItemBatch[]
 }
 
 // سجل تدقيق الدخول — كل محاولة (نجاح/فشل) مع IP ووكيل المتصفح
@@ -353,18 +357,18 @@ model Prescription {
   id               String    @id @default(cuid())
   number           Int       @unique // يُولَّد خادمياً (max+1 داخل معاملة)
   status           String    @default("pending") // pending | verified | rejected | dispensed
-  patientId        String?   // المريض — أساس المراجعة السريرية
-  patientName      String?   // لقطة اسم المريض
-  doctorName       String?   // الطبيب الواصف
+  patientId        String? // المريض — أساس المراجعة السريرية
+  patientName      String? // لقطة اسم المريض
+  doctorName       String? // الطبيب الواصف
   notes            String?
-  rejectReason     String?   // إلزامي عند الرفض
+  rejectReason     String? // إلزامي عند الرفض
   clinicalOverride Boolean   @default(false) // تجاوز مسؤول مسجّل عند التحقق
-  createdBy        String    // من أدخل الوصفة (فني/صيدلي/مدير)
-  creatorName      String?   // لقطة اسم الداخل
-  verifiedBy       String?   // الصيدلي المتحقق
+  createdBy        String // من أدخل الوصفة (فني/صيدلي/مدير)
+  creatorName      String? // لقطة اسم الداخل
+  verifiedBy       String? // الصيدلي المتحقق
   verifierName     String?
   verifiedAt       DateTime?
-  saleId           String?   // الفاتورة الناتجة عن الصرف
+  saleId           String? // الفاتورة الناتجة عن الصرف
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -380,9 +384,9 @@ model PrescriptionItem {
   prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
   medicineId     String
   medicine       Medicine     @relation(fields: [medicineId], references: [id])
-  medicineName   String       // لقطة وقت الإدخال
+  medicineName   String // لقطة وقت الإدخال
   quantity       Int
-  instructions   String?      // إرشادات الاستخدام
+  instructions   String? // إرشادات الاستخدام
   verified       Boolean      @default(false) // مطابقة باركود فردية لكل بند
 
   @@index([prescriptionId])
@@ -392,15 +396,15 @@ model PrescriptionItem {
 // ───────────────────────────── المرضى ─────────────────────────────
 
 model Patient {
-  id                 String   @id @default(cuid())
+  id                 String    @id @default(cuid())
   name               String
-  nationalId         String   @unique
+  nationalId         String    @unique
   phone              String?
   chronicMedications String?
   allergies          String?
   dateOfBirth        DateTime? // تاريخ الميلاد — أساس فحص الحد الأدنى للعمر (v4.3)
-  pregnancyStatus    String   @default("none") // none | pregnant | breastfeeding — بوابة الحمل (v4.3)
-  createdAt          DateTime @default(now())
+  pregnancyStatus    String    @default("none") // none | pregnant | breastfeeding — بوابة الحمل (v4.3)
+  createdAt          DateTime  @default(now())
 
   policies PatientInsurancePolicy[]
 
@@ -439,6 +443,7 @@ model Session {
 
   @@index([userId, revokedAt])
 }
+
 /// دليل الدواء الوطني (v4.0) — المحتوى المرخص المرجعي الذي يراه العميل،
 /// منفصل عن المخزون التشغيلي (Medicine) ومرتبط باختياري عبر باركود المنتج
 /// المخزّن لتفعيل «التوفر الحي» و«السعر الفعلي» في نشرة الدواء.
@@ -535,7 +540,54 @@ model Branch {
   users User[]
   sales Sale[]
 
+  branchStocks BranchStock[]
+  transfersIn  StockTransfer[] @relation("transfersTo")
+  transfersOut StockTransfer[] @relation("transfersFrom")
+
   @@index([isActive])
+}
+
+// ── v5.2 — توزيع المخزون بين الفروع ──
+// مرايا تشغيلية فوق المخزون المركزي (قرار v4.6 الموثق): الرصيد المركزي هو
+// الفعلي دائماً، ورصيد الفرع هو الكمية المخصصة له. البيع من فرع مُوزَّع
+// يخصم من المرايا والمركز معاً — والثبات المحفوظ: مجموع المخصص ≤ المركزي.
+model BranchStock {
+  id         String   @id @default(cuid())
+  medicineId String
+  medicine   Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  branchId   String
+  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  quantity   Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([medicineId, branchId])
+  @@index([branchId])
+}
+
+// تحويل مخزون بين المستودع المركزي (fromBranchId = null) والفروع أو بين فرعين —
+// دورة اعتماد: pending → accepted (يطبّق الكميات ذرياً) أو cancelled.
+model StockTransfer {
+  id               String    @id @default(cuid())
+  medicineId       String
+  medicine         Medicine  @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  fromBranchId     String? // null = المستودع المركزي
+  fromBranch       Branch?   @relation("transfersFrom", fields: [fromBranchId], references: [id])
+  toBranchId       String
+  toBranch         Branch    @relation("transfersTo", fields: [toBranchId], references: [id])
+  quantity         Int
+  status           String    @default("pending") // pending | accepted | cancelled
+  note             String?
+  createdByUserId  String?
+  createdBy        User?     @relation("transfersCreator", fields: [createdByUserId], references: [id])
+  acceptedByUserId String?
+  acceptedBy       User?     @relation("transfersAcceptor", fields: [acceptedByUserId], references: [id])
+  acceptedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@index([medicineId])
+  @@index([toBranchId])
 }
 
 // ── v4.6 — التأمين الطبي ──
@@ -601,7 +653,7 @@ model ReportSnapshot {
   kind        String   @default("daily") // daily | weekly
   periodStart DateTime // بداية اليوم المغطى (00:00 UTC)
   periodEnd   DateTime // نهايته الحصرية
-  data        Json     // مؤشرات اليوم: مبيعات، أعلى الأصناف، نواقص، صلاحيات…
+  data        Json // مؤشرات اليوم: مبيعات، أعلى الأصناف، نواقص، صلاحيات…
   createdAt   DateTime @default(now())
 
   @@unique([kind, periodStart])

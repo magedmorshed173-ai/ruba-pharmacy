@@ -23,6 +23,7 @@ import {
   assertAvailable,
   mapActiveReservations,
 } from "@/lib/reservations";
+import { gateSaleForBranch } from "@/lib/transfers"; // v5.2 — توزيع الفروع
 import { splitInsurancePayment } from "@/lib/insurance";
 import {
   buildSimplifiedQr,
@@ -215,6 +216,8 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
         batchAllocations: { batchId: string; lotNumber: string; quantity: number }[];
       }[] = [];
       const batchDeductions: { batchId: string; newBatchQty: number }[] = [];
+      // v5.2 — الخصم من مرايا الفروع: تجميع لكل دواء حتى تتكرر أصناف السلة بأمان
+      const branchTake = new Map<string, number>(); // medId → مجموع الخصم من مرآة فرع البيع
 
       for (const item of params.items) {
         const qty = toInt(item.quantity, 0);
@@ -232,6 +235,30 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
           med.quantity,
           reservedMap.get(med.id) ?? 0
         );
+
+        // ── v5.2 — بوابة توزيع الفروع: إن وُجد توزيع لهذا الدواء فالصرف
+        // من رصيد فرع البيع حصراً (الرصيد يُعرض بعد ما سبق في السلة نفسها) ──
+        const branchRows = await tx.branchStock.findMany({
+          where: { medicineId: med.id },
+        });
+        if (branchRows.length > 0) {
+          const row = params.branchId
+            ? branchRows.find((r) => r.branchId === params.branchId)
+            : undefined;
+          const gate = gateSaleForBranch({
+            hasDistribution: true,
+            saleBranchId: params.branchId,
+            branchStock:
+              row !== undefined
+                ? row.quantity - (branchTake.get(med.id) ?? 0)
+                : undefined,
+            quantity: qty,
+            medicineName: med.name,
+          });
+          if (!gate.allowed) throw new Error(gate.message ?? "الكمية غير متاحة في فرعك");
+          if (row)
+            branchTake.set(med.id, (branchTake.get(med.id) ?? 0) + qty);
+        }
 
         // ── FEFO: الخصم من الدفعات الأقرب انتهاءً، تجاهل المنتهية والمسحوبة ──
         const batches = await tx.batch.findMany({
@@ -408,6 +435,18 @@ export async function createSale(params: CreateSaleParams): Promise<SaleResult> 
         await tx.batch.update({
           where: { id: d.batchId },
           data: { quantity: d.newBatchQty },
+        });
+      }
+      // ── v5.2 — خصم مرايا الفروع في نفس الذرية (بعد اجتياز البوابة) ──
+      for (const [medId, take] of branchTake) {
+        await tx.branchStock.update({
+          where: {
+            medicineId_branchId: {
+              medicineId: medId,
+              branchId: params.branchId as string,
+            },
+          },
+          data: { quantity: { decrement: take } },
         });
       }
       // مزامنة «أقرب صلاحية» على مستوى الدواء مع الدفعات المتبقية

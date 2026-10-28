@@ -42,6 +42,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { TransfersDialog } from "./transfers-dialog"; // v5.2 — التحويلات بين الفروع
 import {
   Search,
   Plus,
@@ -53,6 +54,8 @@ import {
   Loader2,
   Tags,
   X,
+  ArrowLeftRight,
+  FileSpreadsheet,
   ArrowDownUp,
   Layers,
 } from "lucide-react";
@@ -94,6 +97,9 @@ export function InventoryView({ user }: { user: AuthUser }) {
 
   const [restockTarget, setRestockTarget] = useState<Medicine | null>(null);
   const [restockQty, setRestockQty] = useState("");
+  // ── v5.2 — التحويلات بين الفروع + تصدير Excel ──
+  const [transfersOpen, setTransfersOpen] = useState(false);
+  const [exportingInv, setExportingInv] = useState(false);
   const [restockRef, setRestockRef] = useState("");
   const [restocking, setRestocking] = useState(false);
 
@@ -305,6 +311,39 @@ export function InventoryView({ user }: { user: AuthUser }) {
             ))}
           </SelectContent>
         </Select>
+        <Button
+          variant="outline"
+          onClick={() => setTransfersOpen(true)}
+        >
+          <ArrowLeftRight className="size-4" />
+          التحويلات
+        </Button>
+        <Button
+          variant="outline"
+          onClick={async () => {
+            setExportingInv(true);
+            try {
+              const res = await fetch("/api/reports/inventory/export", { credentials: "include" });
+              if (!res.ok) throw new Error("فشل التصدير");
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `ruba-inventory-${new Date().toISOString().slice(0, 10)}.xlsx`;
+              a.click();
+              URL.revokeObjectURL(url);
+              toast.success("تم تصدير المخزون إلى Excel");
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : "فشل التصدير");
+            } finally {
+              setExportingInv(false);
+            }
+          }}
+          disabled={exportingInv}
+        >
+          {exportingInv ? <Loader2 className="size-4 animate-spin" /> : <FileSpreadsheet className="size-4" />}
+          تصدير Excel
+        </Button>
         {canManage && (
           <>
             <Button variant="outline" onClick={() => setCatsOpen(true)}>
@@ -318,6 +357,9 @@ export function InventoryView({ user }: { user: AuthUser }) {
           </>
         )}
       </div>
+
+      {/* v5.2 — حوار التحويلات بين الفروع */}
+      <TransfersDialog open={transfersOpen} onOpenChange={setTransfersOpen} user={user} />
 
       {/* الجدول */}
       <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
