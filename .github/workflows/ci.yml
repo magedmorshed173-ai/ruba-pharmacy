@@ -19,7 +19,7 @@ jobs:
       DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
       AUTH_SECRET: "ci-build-secret-not-used-at-runtime-0123456789"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -70,7 +70,7 @@ jobs:
       E2E_ADMIN_USER: "admin"
       E2E_ADMIN_PASSWORD: "ruba-e2e-password-2026"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
