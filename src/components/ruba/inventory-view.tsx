@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { TransfersDialog } from "./transfers-dialog"; // v5.2 — التحويلات بين الفروع
+import { StocktakeDialog } from "./stocktake-dialog"; // v5.6 — الجرد الفعلي
 import {
   Search,
   Plus,
@@ -55,6 +56,7 @@ import {
   Tags,
   X,
   ArrowLeftRight,
+  ClipboardList,
   FileSpreadsheet,
   ArrowDownUp,
   Layers,
@@ -99,6 +101,7 @@ export function InventoryView({ user }: { user: AuthUser }) {
   const [restockQty, setRestockQty] = useState("");
   // ── v5.2 — التحويلات بين الفروع + تصدير Excel ──
   const [transfersOpen, setTransfersOpen] = useState(false);
+  const [stocktakeOpen, setStocktakeOpen] = useState(false); // v5.6 — الجرد الفعلي
   const [exportingInv, setExportingInv] = useState(false);
   const [restockRef, setRestockRef] = useState("");
   const [restocking, setRestocking] = useState(false);
@@ -318,6 +321,12 @@ export function InventoryView({ user }: { user: AuthUser }) {
           <ArrowLeftRight className="size-4" />
           التحويلات
         </Button>
+        {canManage && (
+          <Button variant="outline" onClick={() => setStocktakeOpen(true)}>
+            <ClipboardList className="size-4" />
+            الجرد الفعلي
+          </Button>
+        )}
         <Button
           variant="outline"
           onClick={async () => {
@@ -360,6 +369,9 @@ export function InventoryView({ user }: { user: AuthUser }) {
 
       {/* v5.2 — حوار التحويلات بين الفروع */}
       <TransfersDialog open={transfersOpen} onOpenChange={setTransfersOpen} user={user} />
+
+      {/* v5.6 — حوار الجرد الفعلي */}
+      <StocktakeDialog open={stocktakeOpen} onOpenChange={setStocktakeOpen} user={user} />
 
       {/* الجدول */}
       <div className="overflow-hidden rounded-xl border bg-card shadow-sm">

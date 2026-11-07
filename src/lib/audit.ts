@@ -26,6 +26,9 @@ export const AUDIT_ACTIONS = {
   "transfer.create": "إنشاء تحويل مخزون",
   "transfer.accept": "تنفيذ تحويل مخزون",
   "transfer.cancel": "إلغاء تحويل مخزون",
+  "stocktake.open": "بدء جلسة جرد فعلي",
+  "stocktake.apply": "تطبيق فروقات الجرد",
+  "stocktake.cancel": "إلغاء جلسة جرد",
 } as const satisfies Record<string, string>;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
@@ -47,6 +50,7 @@ export const AUDIT_GROUPS: Record<string, string> = {
   batch: "المخزون",
   user: "المستخدمون",
   transfer: "التحويلات",
+  stocktake: "الجرد",
 };
 
 // ── أنواع بنيوية دنيا — PrismaClient وtx والمحاكيات تصدّقها جميعاً ──

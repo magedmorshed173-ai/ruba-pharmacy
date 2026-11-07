@@ -42,6 +42,8 @@ model User {
   transfersCreated  StockTransfer[] @relation("transfersCreator")
   transfersAccepted StockTransfer[] @relation("transfersAcceptor")
   auditLogs         AuditLog[]      @relation("auditActor")
+  stockCountsOpened StockCount[]    @relation("stockCountsOpener")
+  stockCountsClosed StockCount[]    @relation("stockCountsCloser")
 }
 
 // ───────────────────────────── المخزون ─────────────────────────────
@@ -683,4 +685,53 @@ model AuditLog {
   @@index([createdAt])
   @@index([action, createdAt])
   @@index([userId, createdAt])
+}
+
+// ── v5.6 — الجرد الفعلي ──
+// جلسة عدّ فيزيائي لنقطة زمنية: عند الفتح تُجمَّد أرصدة النظام لكل دفعة
+// نشطة (LOT) مع بياناتها المرجعية، ثم تُدخل الكميات المعدودة على مهل،
+// وعند التطبيق تُصحَّح أرصدة الدفعات ذرياً (العدّ هو الحقيقة) مع حركة
+// مخزون لكل دواء ومساءلة كاملة — وثبات «المخصص ≤ المركزي» محفوظ.
+model StockCount {
+  id           String    @id @default(cuid())
+  number       String    @unique // SC-20261107-AB12CD
+  status       String    @default("open") // open | closed | cancelled
+  batchesTotal Int       @default(0) // عدد الدفعات المجمَّدة لحظة الفتح
+  note         String?
+  // ملخصات تُخزَّن لحظة التطبيق — عرض القوائم بلا إعادة حساب
+  countedItems   Int @default(0) // عُدّت فعلاً
+  matchedItems   Int @default(0) // مطابقة
+  increasedItems Int @default(0) // زيادة عن النظام
+  decreasedItems Int @default(0) // عجز عن النظام
+  skippedItems   Int @default(0) // لم تُعدّ أو دفعتها حذفت
+  netQtyDelta    Int @default(0) // صافي فرق الكميات المطبَّق
+  netCostDelta   Int @default(0) // صافي فرق القيمة بالتكلفة (هللات)
+  openedById String?
+  openedBy   User?     @relation("stockCountsOpener", fields: [openedById], references: [id])
+  openedAt   DateTime  @default(now())
+  closedById String?
+  closedBy   User?     @relation("stockCountsCloser", fields: [closedById], references: [id])
+  closedAt   DateTime?
+  items      StockCountItem[]
+
+  @@index([status, openedAt])
+  @@index([openedAt])
+}
+
+// بند جرد مجمّد — لقطة مستقلة بلا مفاتيح خارجية حية: حذف الدواء أو الدفعة
+// لاحقاً لا يكسر التقرير التاريخي (batchId/medicineId مرجعان نصيان للربط وقت التنفيذ)
+model StockCountItem {
+  id           String     @id @default(cuid())
+  countId      String
+  count        StockCount @relation(fields: [countId], references: [id], onDelete: Cascade)
+  batchId      String
+  medicineId   String
+  medicineName String // جامد
+  lotNumber    String // جامد
+  expiryDate   DateTime // جامد
+  unitCost     Int // جامد — هللات (أساس قيمة الفرق)
+  systemQty    Int // رصيد النظام المجمَّد لحظة الفتح
+  countedQty   Int? // null = لم يُعدّ بعد
+  @@unique([countId, batchId])
+  @@index([countId])
 }
